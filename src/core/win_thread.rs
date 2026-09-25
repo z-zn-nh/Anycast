@@ -45,6 +45,12 @@ pub enum SysEvent {
     WakeHotkey,
     BindingHotkey(i32),
     ClipboardText(String),
+    /// 注册失败。`id` 是 `WAKE_HOTKEY_ID` 或某个绑定的 id。
+    ///
+    /// 为什么需要它：`RegisterHotKey` 失败以前只 `log::warn!`，用户完全看不到 ——
+    /// 配置照存、界面上显示得好好的，热键就是不生效。而失败是**常态**：
+    /// 保存时探测通过、之后别的程序把这个组合键抢走，或者开机时对方先启动。
+    HotkeyRegisterFailed { id: i32, reason: String },
 }
 
 pub type SysHandler = Arc<dyn Fn(SysEvent) + Send + Sync>;
@@ -199,7 +205,11 @@ unsafe fn register(hwnd: HWND, id: i32, spec: &HotkeySpec) -> Result<(), String>
     }
 }
 
-unsafe fn handle_commands(st: &mut ThreadState) {
+/// 处理挂起的命令。**返回待发事件，而不是自己回调 handler** ——
+/// 本函数是在 `STATE.with(|s| s.borrow_mut())` 持有期间被调用的，
+/// 在里面回调会让 handler 重入同一把 RefCell 借用。由 `wndproc` 在借用释放后再发。
+unsafe fn handle_commands(st: &mut ThreadState) -> Vec<SysEvent> {
+    let mut evs = Vec::new();
     while let Ok(cmd) = st.rx.try_recv() {
         match cmd {
             SysCommand::SetWakeHotkey(spec) => {
@@ -210,7 +220,12 @@ unsafe fn handle_commands(st: &mut ThreadState) {
                 if let Some(s) = spec {
                     match register(st.hwnd, WAKE_HOTKEY_ID, &s) {
                         Ok(()) => st.wake = Some(s),
-                        Err(e) => log::warn!("唤醒热键注册失败: {e}"),
+                        Err(e) => {
+                            // 注意旧键已经先注销了：注册失败意味着**唤醒热键彻底没了**，
+                            // 不是「保持原样」。这个后果必须让用户知道。
+                            log::warn!("唤醒热键注册失败: {e}");
+                            evs.push(SysEvent::HotkeyRegisterFailed { id: WAKE_HOTKEY_ID, reason: e });
+                        }
                     }
                 }
             }
@@ -222,7 +237,10 @@ unsafe fn handle_commands(st: &mut ThreadState) {
                 for (id, spec) in list {
                     match register(st.hwnd, id, &spec) {
                         Ok(()) => st.bindings.push((id, spec)),
-                        Err(e) => log::warn!("快捷直达热键 {id} 注册失败: {e}"),
+                        Err(e) => {
+                            log::warn!("快捷直达热键 {id} 注册失败: {e}");
+                            evs.push(SysEvent::HotkeyRegisterFailed { id, reason: e });
+                        }
                     }
                 }
             }
@@ -248,6 +266,7 @@ unsafe fn handle_commands(st: &mut ThreadState) {
             }
         }
     }
+    evs
 }
 
 unsafe fn read_clipboard_text(hwnd: HWND) -> Option<String> {
@@ -302,11 +321,21 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_ANYCAST_CMD => {
-            STATE.with(|s| {
+            // 借用分开两次取：handle_commands 要 borrow_mut，回调要 borrow。
+            // 合成一次写会 panic。事件在借用全部释放后才发。
+            let evs = STATE.with(|s| {
                 if let Some(st) = s.borrow_mut().as_mut() {
-                    handle_commands(st);
+                    handle_commands(st)
+                } else {
+                    Vec::new()
                 }
             });
+            let handler = STATE.with(|s| s.borrow().as_ref().map(|st| Arc::clone(&st.handler)));
+            if let Some(h) = handler {
+                for ev in evs {
+                    h(ev);
+                }
+            }
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),

@@ -20,7 +20,7 @@ use search::{SearchEngine, SearchProvider};
 use settings::AppSettings;
 use std::sync::Arc;
 use storage::{HotkeyRecord, Storage};
-use win_thread::{SysEvent, SystemBus, BINDING_ID_BASE};
+use win_thread::{SysEvent, SystemBus, BINDING_ID_BASE, WAKE_HOTKEY_ID};
 
 pub type Notifier = Arc<dyn Fn(BackendNotification) + Send + Sync>;
 
@@ -366,6 +366,20 @@ impl AppCore {
                     }
                 }
             }
+            SysEvent::HotkeyRegisterFailed { id, reason } => {
+                // 把 id 翻成人话再报出去。核心层知道 id 对应谁，GUI 不知道 ——
+                // 让 GUI 去猜 id 语义会把「谁失败了」这件事变成两处各写一遍。
+                let label = if id == WAKE_HOTKEY_ID {
+                    format!("唤醒快捷键 {}", hotkey::normalize(&self.settings.read().wake_hotkey))
+                } else {
+                    let idx = (id - BINDING_ID_BASE) as usize;
+                    match self.hotkeys.read().get(idx) {
+                        Some(b) => format!("快捷直达「{}」{}", b.name, b.hotkey),
+                        None => format!("快捷直达 #{}", idx),
+                    }
+                };
+                self.notify(BackendNotification::HotkeyRegisterFailed { label, reason });
+            }
             SysEvent::ClipboardText(text) => self.on_clipboard(text),
         }
     }
@@ -534,6 +548,16 @@ impl AppCore {
             return Err(anyhow!("无效的快捷键"));
         }
         if let Some(why) = self.detect_conflict(text, Some("__wake__")) {
+            return Err(anyhow!("{why}"));
+        }
+        // 真去试注册一次再落盘。缺了这步，被占用的组合键会被**照存不误**：
+        // 界面上显示得好好的，热键永远不生效，而用户没有任何线索 ——
+        // 这正是冲突 H。`save_hotkey` 早就这么做了，唤醒热键这里漏了。
+        if let Err(why) = self.probe_hotkey(text) {
+            self.notify(BackendNotification::HotkeyConflictDetected {
+                hotkey: hotkey::normalize(text),
+                reason: why.clone(),
+            });
             return Err(anyhow!("{why}"));
         }
         self.settings.write().wake_hotkey = hotkey::normalize(text);

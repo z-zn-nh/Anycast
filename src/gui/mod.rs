@@ -68,6 +68,15 @@ pub struct Gui {
     query_gen: Arc<AtomicU64>,
     toast_timer: slint::Timer,
     poll_timer: slint::Timer,
+    /// 窗口隐藏期间产生的 Toast，等窗口真正打开时补显。
+    ///
+    /// 为什么需要它：Toast 是画在窗口里的，窗口不可见时显示等于丢掉。而
+    /// 「开机自启」走的正是 `--silent`（`launcher::set_autostart` 往 Run 键里
+    /// 写的就是这个参数），偏偏热键注册失败就发生在那一刻 —— 用户永远看不到
+    /// 「你的快捷键没生效」，只会觉得「我明明设了怎么没反应」。
+    ///
+    /// 只留一条：后来者覆盖前者，避免开窗时一串旧提示挨个弹。
+    pending_toast: RefCell<Option<(String, String)>>,
 }
 
 thread_local! {
@@ -189,6 +198,7 @@ pub fn run(silent: bool) -> anyhow::Result<()> {
         query_gen: Arc::new(AtomicU64::new(0)),
         toast_timer: slint::Timer::default(),
         poll_timer: slint::Timer::default(),
+        pending_toast: RefCell::new(None),
     });
     GUI.with(|g| *g.borrow_mut() = Some(Rc::clone(&gui)));
 
@@ -262,6 +272,13 @@ impl Gui {
         self.ui.invoke_focus_search();
         self.refresh_search();
         self.refresh_pinned();
+
+        // 补显窗口隐藏期间攒下的提示。开机自启（`--silent`）时热键被别人占住的
+        // 告警就走这条路 —— 那时窗口还没显示，只能等到这里才让用户看见。
+        let pending = self.pending_toast.borrow_mut().take();
+        if let Some((text, icon)) = pending {
+            self.show_toast_now(&text, &icon);
+        }
     }
 
     /// 应用 DWM 效果并前置窗口。首次显示时 winit 窗口在事件循环启动前尚未创建（hwnd 为 None），
@@ -404,6 +421,19 @@ impl Gui {
     // Toast
     // ------------------------------------------------------------------
     fn toast(self: &Rc<Self>, text: &str, icon: &str) {
+        // 窗口不可见时 Toast 是画在看不见的地方 —— 直接显示等于丢掉。
+        // 典型场景：`--silent` 开机自启时热键被别人占住。存起来，等
+        // `show_window()` 把窗口真正打开时补显。见 `pending_toast` 的说明。
+        if !self.ui.window().is_visible() {
+            *self.pending_toast.borrow_mut() = Some((text.to_string(), icon.to_string()));
+            return;
+        }
+        self.show_toast_now(text, icon);
+    }
+
+    /// 无条件显示一条 Toast。**调用方负责确认窗口此刻看得见** ——
+    /// 窗口隐藏时调用它，用户什么也看不到（这就是 `toast()` 存在的原因）。
+    fn show_toast_now(self: &Rc<Self>, text: &str, icon: &str) {
         self.ui.set_toast_text(ss(text));
         self.ui.set_toast_icon(ss(icon));
         self.ui.set_toast_shown(true);
@@ -1518,6 +1548,12 @@ impl Gui {
             }
             BackendNotification::HotkeyConflictDetected { hotkey, reason } => {
                 self.toast(&format!("⚠ 快捷键 {hotkey} 冲突: {reason}"), "alert");
+            }
+            BackendNotification::HotkeyRegisterFailed { label, reason } => {
+                // 与上面那条的区别：这条是「已经存下来的配置现在用不了」，
+                // 多半发生在启动时被别的程序抢先占用。不说出来的话，用户只会
+                // 觉得「我明明设了快捷键，怎么没反应」，且永远查不到原因。
+                self.toast(&format!("⚠ {label} 未能生效: {reason}"), "alert");
             }
             BackendNotification::ClipboardItemAdded { .. } => {
                 if self.ui.window().is_visible() && self.ui.get_query().is_empty() {

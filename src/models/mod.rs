@@ -207,6 +207,11 @@ pub enum BackendNotification {
     RecentItemsReady { items: Vec<SearchItemModel> },
     HotkeyTriggered { binding_id: String, app_name: String },
     HotkeyConflictDetected { hotkey: String, reason: String },
+    /// **运行时**注册失败 —— 与 `HotkeyConflictDetected` 不是一回事：
+    /// 后者是「你刚保存的没通过校验」（瞬时、绑在保存动作上），
+    /// 这个是「这个热键现在真的用不了」（持续状态，可能是开机时被别人先占了）。
+    /// `label` 已是人话，如「唤醒快捷键 Alt+Space」。
+    HotkeyRegisterFailed { label: String, reason: String },
     ClipboardItemAdded { item: SearchItemModel },
     IndexProgress { files: u64, content_files: u64, done: bool },
     ToastMessage { text: String, icon: String },

@@ -721,6 +721,85 @@ def cmd_bindings(specs):
     return reg_ok and trig_ok
 
 
+def cmd_hold(combo, seconds=600):
+    """占住一个组合键不放，模拟「别的程序已经占了这个键」。
+
+    验证冲突提示需要这个：`RegisterHotKey` 的 1409 是跨进程的，
+    所以外部占住之后，应用再注册同一个组合键必然失败。
+    占住期间必须**泵消息** —— 光注册不泵的话，注册照样有效
+    （注册表在系统里），但本进程收不到 WM_HOTKEY，容易被误判成没占住。
+    """
+    hinst = kernel32.GetModuleHandleW(None)
+    _SELFCHECK_N[0] += 1
+    cls = f"ProbeHoldWnd_{_SELFCHECK_N[0]}"
+
+    WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_long, wt.HWND, ctypes.c_uint,
+                                 wt.WPARAM, wt.LPARAM)
+
+    def _proc(h, m, w, l):
+        return user32.DefWindowProcW(wt.HWND(h), ctypes.c_uint(m),
+                                     wt.WPARAM(w), wt.LPARAM(l))
+
+    proc = WNDPROC(_proc)
+
+    class WNDCLASS(ctypes.Structure):
+        _fields_ = [("style", ctypes.c_uint), ("lpfnWndProc", WNDPROC),
+                    ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wt.HINSTANCE), ("hIcon", wt.HICON),
+                    ("hCursor", wt.HANDLE), ("hbrBackground", wt.HBRUSH),
+                    ("lpszMenuName", wt.LPCWSTR), ("lpszClassName", wt.LPCWSTR)]
+
+    wc = WNDCLASS()
+    wc.lpfnWndProc = proc
+    wc.hInstance = hinst
+    wc.lpszClassName = cls
+    if not user32.RegisterClassW(ctypes.byref(wc)):
+        print(f"ERR: RegisterClass 失败 err={kernel32.GetLastError()}", flush=True)
+        return 1
+
+    _cwex = user32.CreateWindowExW
+    _cwex.argtypes = [wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD,
+                      ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                      wt.HWND, wt.HMENU, wt.HINSTANCE, ctypes.c_void_p]
+    _cwex.restype = wt.HWND
+    hwnd = _cwex(0, cls, cls, 0, 0, 0, 0, 0,
+                 wt.HWND(-3), None, hinst, None)
+    if not hwnd:
+        print(f"ERR: CreateWindowEx 失败 err={kernel32.GetLastError()}", flush=True)
+        return 1
+
+    mods, vk = spec_of(combo)
+    if vk is None:
+        print(f"ERR: 解析不了 {combo!r}", flush=True)
+        return 1
+    if not user32.RegisterHotKey(hwnd, 0x5001, mods | MOD_NOREPEAT, vk):
+        print(f"ERR: 占不住 {combo}，err={kernel32.GetLastError()}"
+              + ("（已被占用）" if kernel32.GetLastError() == ERROR_HOTKEY_ALREADY_REGISTERED else ""),
+              flush=True)
+        return 1
+
+    print(f"HELD {combo}", flush=True)
+    print(f"（占住 {seconds}s，泵消息中；Ctrl+C 或杀掉本进程即释放）", flush=True)
+
+    class MSG(ctypes.Structure):
+        _fields_ = [("hwnd", wt.HWND), ("message", ctypes.c_uint),
+                    ("wParam", wt.WPARAM), ("lParam", wt.LPARAM),
+                    ("time", wt.DWORD), ("pt_x", ctypes.c_long),
+                    ("pt_y", ctypes.c_long)]
+
+    msg = MSG()
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+        time.sleep(0.05)
+    user32.UnregisterHotKey(hwnd, 0x5001)
+    user32.DestroyWindow(hwnd)
+    print("RELEASED", flush=True)
+    return 0
+
+
 def cmd_claim():
     combo_cfg, _ = cfg_hotkey()
     combo = combo_cfg if isinstance(combo_cfg, str) else "Alt+Space"
@@ -778,6 +857,10 @@ if __name__ == "__main__":
         diag(argv[1] if len(argv) > 1 else "Alt+Space")
     elif argv[0] == "fg":
         cmd_fg()
+    elif argv[0] == "hold":
+        if len(argv) < 2:
+            raise SystemExit("ERR: 用法 hold <combo> [秒数]")
+        sys.exit(cmd_hold(argv[1], int(argv[2]) if len(argv) > 2 else 600))
     elif argv[0] == "claim":
         cmd_claim()
     elif argv[0] == "bindings":
