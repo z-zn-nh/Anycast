@@ -604,4 +604,122 @@ mod tests {
         assert!(it.is_search);
         assert_eq!(it.backend, "jev");
     }
+
+    /// **真实模型输出的回归夹具**（数据源：`doc/Jev实测报告-措辞修正后.md`）。
+    ///
+    /// 那份报告是 Python 探针（`tools/jev_probe.py`）打**真端点**跑出来的：
+    /// 12 个用例、26 个槽位判定、96%。这里把每个用例的**原始输出**（概率 + 槽位）
+    /// 重放一遍，走 `parse_answers` → `Intent::from_answers`，
+    /// 断言 Rust 得出**与探针相同的结论**。
+    ///
+    /// 为什么非做不可：Rust 侧此前只验了「响应形状能解析」和「槽位能落到检索范围」，
+    /// **从没拿真实模型输出跑过**。而真实输出里全是贴着阈值的边界值
+    /// （`is_search` = 0.60 / 0.59 / 0.38，`is_natural` = 0.46）——
+    /// 阈值只要与探针差一点，Rust 的分类就和已经验证过的行为不一致，
+    /// 界面上表现为「智能模式偶尔不解析」，极难定位。
+    ///
+    /// ⚠️ 期望值取报告的**「实际」列**，不是「期望」列：这里钉的是
+    /// 「同一份输出 → 同一个结论」，而不是「模型答得对不对」（那是探针的活）。
+    /// `kw1` 就是那个已知错例（模型只给 0.38，被判成「不是搜索」），
+    /// 这里**照样按 0.38 → false 钉住** —— 让已知限制是被记录的，而不是某天突然冒出来。
+    #[test]
+    fn real_probe_output_reproduces_the_same_slots() {
+        use crate::core::decision::{
+            slots::{LocationSlot, TimeSlot, TypeSlot},
+            Intent,
+        };
+
+        struct Case {
+            name: &'static str,
+            is_search: f32,
+            is_natural: f32,
+            /// (类型, 时间, 位置) 的取值与各自置信度 —— 与报告「输出」行逐字对应
+            slots: [(&'static str, f32); 3],
+            want_search: bool,
+            want_natural: bool,
+        }
+
+        let cases = [
+            Case { name: "zh1 找一下昨天改的 docker 配置", is_search: 0.93, is_natural: 0.97,
+                   slots: [("code", 1.00), ("yesterday", 1.00), ("any", 0.98)],
+                   want_search: true, want_natural: true },
+            Case { name: "zh2 那个写存储逻辑的文档", is_search: 0.60, is_natural: 0.93,
+                   slots: [("document", 1.00), ("any", 1.00), ("any", 0.99)],
+                   want_search: true, want_natural: true },
+            Case { name: "zh3 我的项目文件夹在哪", is_search: 0.93, is_natural: 0.95,
+                   slots: [("folder", 1.00), ("any", 1.00), ("any", 0.86)],
+                   want_search: true, want_natural: true },
+            Case { name: "zh4 上周下载的那个压缩包", is_search: 0.94, is_natural: 0.93,
+                   slots: [("archive", 1.00), ("last_week", 1.00), ("common", 0.92)],
+                   want_search: true, want_natural: true },
+            Case { name: "en1 files I modified yesterday", is_search: 0.85, is_natural: 0.95,
+                   slots: [("all", 0.94), ("yesterday", 1.00), ("any", 0.99)],
+                   want_search: true, want_natural: true },
+            Case { name: "en2 the doc about storage logic", is_search: 0.59, is_natural: 0.92,
+                   slots: [("document", 1.00), ("any", 1.00), ("any", 0.95)],
+                   want_search: true, want_natural: true },
+            Case { name: "en3 any png screenshots from last week", is_search: 0.93, is_natural: 0.96,
+                   slots: [("image", 1.00), ("last_week", 1.00), ("any", 0.99)],
+                   want_search: true, want_natural: true },
+            Case { name: "mix1 找 Dockerfile 昨天改的", is_search: 0.95, is_natural: 0.94,
+                   slots: [("code", 0.99), ("yesterday", 1.00), ("any", 0.89)],
+                   want_search: true, want_natural: true },
+            // 已知错例：模型给 0.38，低于阈值 → 判成「不是搜索」。照实际钉住。
+            Case { name: "kw1 docker", is_search: 0.38, is_natural: 0.15,
+                   slots: [("all", 0.70), ("any", 1.00), ("any", 1.00)],
+                   want_search: false, want_natural: false },
+            Case { name: "kw2 storage.rs", is_search: 0.74, is_natural: 0.09,
+                   slots: [("code", 1.00), ("any", 1.00), ("any", 0.70)],
+                   want_search: true, want_natural: false },
+            // 0.46 贴着阈值下沿 —— 钉住「低于 0.5 即 false」
+            Case { name: "neg1 今天天气怎么样", is_search: 0.01, is_natural: 0.46,
+                   slots: [("all", 0.99), ("today", 0.98), ("any", 0.99)],
+                   want_search: false, want_natural: false },
+            Case { name: "neg2 帮我写一段快排", is_search: 0.01, is_natural: 0.93,
+                   slots: [("code", 1.00), ("any", 1.00), ("any", 1.00)],
+                   want_search: false, want_natural: true },
+        ];
+
+        for c in cases {
+            let (ty, ty_c) = c.slots[0];
+            let (tm, tm_c) = c.slots[1];
+            let (lc, lc_c) = c.slots[2];
+
+            // 用 serde_json 拼而不是 format! —— 手写 JSON 模板里的花括号
+            // 要一个个转义成 `{{`，错一个就是「测试自己写坏了响应」，
+            // 那种失败会伪装成产品缺陷。
+            let json = serde_json::json!({
+                "answers": {
+                    "is_search": {"type": "noul", "noul": c.is_search},
+                    "is_natural": {"type": "noul", "noul": c.is_natural},
+                    "type": {"type": "choice", "choice": ty, "confidence": ty_c},
+                    "time": {"type": "choice", "choice": tm, "confidence": tm_c},
+                    "location": {"type": "choice", "choice": lc, "confidence": lc_c},
+                }
+            })
+            .to_string();
+
+            let answers =
+                parse_answers(&json).unwrap_or_else(|e| panic!("{}：真实响应解析失败 {e}", c.name));
+            let it = Intent::from_answers(&answers, "jev");
+
+            assert_eq!(it.is_search, c.want_search, "{}：is_search 判定与探针不一致", c.name);
+            assert_eq!(it.is_natural, c.want_natural, "{}：is_natural 判定与探针不一致", c.name);
+            assert_eq!(it.type_slot, TypeSlot::parse(ty).unwrap(), "{}：type 槽位", c.name);
+            assert_eq!(it.time_slot, TimeSlot::parse(tm).unwrap(), "{}：time 槽位", c.name);
+            assert_eq!(it.location_slot, LocationSlot::parse(lc).unwrap(), "{}：location 槽位", c.name);
+            assert_eq!(it.backend, "jev");
+
+            // 置信度取三个槽位置信度的**最小值** —— 这条同时钉住
+            // 「回落成 all/any 的槽位不计入」这个约定：真计入了，
+            // `en1`（type=all 0.94）这类用例的数字就会漂。
+            let want_conf = ty_c.min(tm_c).min(lc_c);
+            assert!(
+                (it.confidence - want_conf).abs() < 1e-6,
+                "{}：置信度应为 {want_conf}，实际 {}",
+                c.name,
+                it.confidence
+            );
+        }
+    }
 }
