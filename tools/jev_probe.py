@@ -106,20 +106,38 @@ QUESTIONS = {
 }
 
 # ── 测试用例：覆盖中文 / 英文 / 混合 / 纯关键词 / 非检索 ────────────────────
+# expect 只写「必须判对」的槽位；没写的槽位不参与准确率统计（例如 zh2 的语义指代
+# 本就无法由槽位模型表达，type 填 all 与 document 都不算错）。
+# is_search / is_natural 为 noul 概率，判定阈值见 PASS_THRESHOLD。
 CASES = [
-    ("zh1", "找一下昨天改的 docker 配置", "中文·时间+类型"),
-    ("zh2", "那个写存储逻辑的文档", "中文·语义指代"),
-    ("zh3", "我的项目文件夹在哪", "中文·文件夹"),
-    ("zh4", "上周下载的那个压缩包", "中文·上周+压缩包"),
-    ("en1", "files I modified yesterday", "英文·时间"),
-    ("en2", "the doc about storage logic", "英文·语义"),
-    ("en3", "any png screenshots from last week", "英文·类型+时间"),
-    ("mix1", "找 Dockerfile 昨天改的", "中英混合"),
-    ("kw1", "docker", "纯关键词"),
-    ("kw2", "storage.rs", "纯关键词·文件名"),
-    ("neg1", "今天天气怎么样", "非检索·闲聊"),
-    ("neg2", "帮我写一段快排", "非检索·生成任务"),
+    ("zh1", "找一下昨天改的 docker 配置", "中文·时间+类型",
+     {"is_search": True, "type": "code", "time": "yesterday"}),
+    ("zh2", "那个写存储逻辑的文档", "中文·语义指代",
+     {"is_search": True, "type": "document"}),
+    ("zh3", "我的项目文件夹在哪", "中文·文件夹",
+     {"is_search": True, "type": "folder"}),
+    ("zh4", "上周下载的那个压缩包", "中文·上周+压缩包",
+     {"is_search": True, "type": "archive", "time": "last_week"}),
+    ("en1", "files I modified yesterday", "英文·时间",
+     {"is_search": True, "time": "yesterday"}),
+    ("en2", "the doc about storage logic", "英文·语义",
+     {"is_search": True, "type": "document"}),
+    ("en3", "any png screenshots from last week", "英文·类型+时间",
+     {"is_search": True, "type": "image", "time": "last_week"}),
+    ("mix1", "找 Dockerfile 昨天改的", "中英混合",
+     {"is_search": True, "type": "code", "time": "yesterday"}),
+    ("kw1", "docker", "纯关键词",
+     {"is_search": True, "is_natural": False}),
+    ("kw2", "storage.rs", "纯关键词·文件名",
+     {"is_search": True, "is_natural": False}),
+    ("neg1", "今天天气怎么样", "非检索·闲聊",
+     {"is_search": False}),
+    ("neg2", "帮我写一段快排", "非检索·生成任务",
+     {"is_search": False}),
 ]
+
+# noul 概率的判定阈值：>= 阈值视为 True
+PASS_THRESHOLD = 0.5
 
 
 def call_jev(url, key, state, questions, proxy=None, timeout=30, model=MODEL):
@@ -164,6 +182,25 @@ def fmt_answer(name, ans):
     return "    %-10s: %s" % (name, json.dumps(ans, ensure_ascii=False)[:80])
 
 
+def judge(answers, expect):
+    """逐槽位比对，返回 [(槽位, 期望, 实际, 是否判对)]。"""
+    rows = []
+    for name, want in expect.items():
+        ans = answers.get(name) or {}
+        t = ans.get("type")
+        if t == "choice":
+            got = ans.get("choice")
+        elif t == "noul":
+            raw = ans.get("noul", 0.0)
+            got = raw >= PASS_THRESHOLD
+        elif t == "score":
+            got = ans.get("score", 0.0)
+        else:
+            got = None
+        rows.append((name, want, got, got == want))
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser(description="Jev 槽位解析探针")
     ap.add_argument("--endpoint", choices=sorted(ENDPOINTS), default="official",
@@ -175,11 +212,12 @@ def main():
     ap.add_argument("--list", action="store_true", help="列出全部用例后退出")
     ap.add_argument("--raw", action="store_true", help="打印原始响应 JSON")
     ap.add_argument("--model", default=MODEL, help="模型名，生产建议锁定版本号")
+    ap.add_argument("--report", help="把结果写成 markdown 报告到指定路径")
     args = ap.parse_args()
 
     if args.list:
         print("可用用例：")
-        for cid, q, note in CASES:
+        for cid, q, note, _ in CASES:
             print("  %-6s %-32s %s" % (cid, q, note))
         return 0
 
@@ -207,7 +245,8 @@ def main():
 
     lat = []
     errors = 0
-    for cid, query, note in cases:
+    results = []
+    for cid, query, note, expect in cases:
         print("\n[%s] %s   （%s）" % (cid, query, note))
         try:
             resp, ms = call_jev(url, key, query, QUESTIONS, args.proxy, args.timeout, args.model)
@@ -219,10 +258,16 @@ def main():
             except Exception:
                 pass
             print("    HTTP %s %s  %s" % (e.code, e.reason, detail))
+            results.append({"cid": cid, "query": query, "note": note,
+                            "ms": None, "usage": {}, "answers": {},
+                            "rows": [], "error": "HTTP %s %s %s" % (e.code, e.reason, detail)})
             continue
         except Exception as e:
             errors += 1
             print("    调用失败: %s: %s" % (type(e).__name__, e))
+            results.append({"cid": cid, "query": query, "note": note,
+                            "ms": None, "usage": {}, "answers": {},
+                            "rows": [], "error": "%s: %s" % (type(e).__name__, e)})
             continue
 
         lat.append(ms)
@@ -232,8 +277,40 @@ def main():
         answers = resp.get("answers", {}) or {}
         for name in ("is_search", "is_natural", "type", "time", "location"):
             print(fmt_answer(name, answers.get(name)))
+
+        rows = judge(answers, expect)
+        bad = [r for r in rows if not r[3]]
+        if rows:
+            if bad:
+                print("    判定 : %d/%d 正确，错在 %s"
+                      % (len(rows) - len(bad), len(rows),
+                         ", ".join("%s(期望 %s 得到 %s)" % (r[0], r[1], r[2]) for r in bad)))
+            else:
+                print("    判定 : %d/%d 全部正确" % (len(rows), len(rows)))
+
         if args.raw:
             print("    raw: %s" % json.dumps(resp, ensure_ascii=False)[:1200])
+
+        results.append({"cid": cid, "query": query, "note": note, "ms": ms,
+                        "usage": usage, "answers": answers, "rows": rows, "error": None})
+
+    # ── 汇总统计 ──────────────────────────────────────────────────────────
+    def group_of(cid):
+        for p in ("zh", "en", "mix", "kw", "neg"):
+            if cid.startswith(p):
+                return p
+        return "other"
+
+    stats = {}
+    for r in results:
+        if r["error"]:
+            continue
+        g = group_of(r["cid"])
+        s = stats.setdefault(g, [0, 0])
+        for row in r["rows"]:
+            s[1] += 1
+            if row[3]:
+                s[0] += 1
 
     print("\n" + "=" * 72)
     if lat:
@@ -242,6 +319,19 @@ def main():
         print("成功 %d / 失败 %d" % (n, errors))
         print("延迟   min %.0f ms | p50 %.0f ms | max %.0f ms | 平均 %.0f ms"
               % (lat_sorted[0], lat_sorted[n // 2], lat_sorted[-1], sum(lat) / n))
+
+        if stats:
+            print("\n槽位准确率：")
+            tot_ok = tot_all = 0
+            for g in ("zh", "en", "mix", "kw", "neg"):
+                if g in stats:
+                    ok, all_ = stats[g]
+                    tot_ok += ok
+                    tot_all += all_
+                    print("  %-4s %2d/%2d  %.0f%%" % (g, ok, all_, 100.0 * ok / all_))
+            if tot_all:
+                print("  %-4s %2d/%2d  %.0f%%" % ("合计", tot_ok, tot_all, 100.0 * tot_ok / tot_all))
+
         print("\n判读要点（人工核对）：")
         print("  · is_search 在 neg1/neg2 上应 < 0.5，否则会误触发模型")
         print("  · is_natural 在 kw1/kw2 上应 < 0.5，否则纯关键词也会调模型")
@@ -249,7 +339,76 @@ def main():
         print("  · 对比 zh* 与 en* 的填对率，决定装英文根版还是多语言版")
     else:
         print("没有任何成功调用。失败 %d 次。" % errors)
+
+    if args.report:
+        write_report(args.report, url, args.model, args.proxy, results, stats, lat, errors)
+        print("\n报告已写入 %s" % args.report)
+
     return 1 if errors and not lat else 0
+
+
+def write_report(path, url, model, proxy, results, stats, lat, errors):
+    """把本轮实测写成 markdown，便于贴进开发文档或对比多次结果。"""
+    lines = []
+    lines.append("# Jev 探针实测报告\n")
+    lines.append("- 端点：`%s`" % url)
+    lines.append("- 模型：`%s`" % model)
+    lines.append("- 代理：%s" % (proxy or "（未使用）"))
+    lines.append("- 用例：成功 %d / 失败 %d" % (len(lat), errors))
+    if lat:
+        ls = sorted(lat)
+        n = len(ls)
+        lines.append("- 延迟：min %.0f ms / p50 %.0f ms / max %.0f ms / 平均 %.0f ms"
+                     % (ls[0], ls[n // 2], ls[-1], sum(ls) / n))
+    lines.append("")
+    lines.append("## 槽位准确率\n")
+    lines.append("| 分组 | 判对 | 总数 | 准确率 |")
+    lines.append("| --- | --- | --- | --- |")
+    tot_ok = tot_all = 0
+    for g in ("zh", "en", "mix", "kw", "neg"):
+        if g in stats:
+            ok, all_ = stats[g]
+            tot_ok += ok
+            tot_all += all_
+            lines.append("| %s | %d | %d | %.0f%% |" % (g, ok, all_, 100.0 * ok / all_))
+    if tot_all:
+        lines.append("| **合计** | **%d** | **%d** | **%.0f%%** |"
+                     % (tot_ok, tot_all, 100.0 * tot_ok / tot_all))
+    lines.append("")
+    lines.append("## 逐用例明细\n")
+    for r in results:
+        lines.append("### `%s` %s" % (r["cid"], r["query"]))
+        lines.append("")
+        if r["error"]:
+            lines.append("- **调用失败**：%s" % r["error"])
+            lines.append("")
+            continue
+        lines.append("- 延迟 %.0f ms，tokens in=%s out=%s"
+                     % (r["ms"], r["usage"].get("input_tokens", "?"),
+                        r["usage"].get("output_tokens", "?")))
+        a = r["answers"]
+        parts = []
+        for name in ("is_search", "is_natural", "type", "time", "location"):
+            ans = a.get(name)
+            if not ans:
+                continue
+            t = ans.get("type")
+            if t == "choice":
+                parts.append("%s=`%s`(%.2f)" % (name, ans.get("choice"), ans.get("confidence", 0.0)))
+            elif t == "noul":
+                parts.append("%s=%.2f" % (name, ans.get("noul", 0.0)))
+            elif t == "score":
+                parts.append("%s=%.2f" % (name, ans.get("score", 0.0)))
+        lines.append("- 输出：" + "，".join(parts))
+        if r["rows"]:
+            lines.append("")
+            lines.append("| 槽位 | 期望 | 实际 | 结果 |")
+            lines.append("| --- | --- | --- | --- |")
+            for name, want, got, ok in r["rows"]:
+                lines.append("| %s | %s | %s | %s |" % (name, want, got, "✅" if ok else "❌"))
+        lines.append("")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
