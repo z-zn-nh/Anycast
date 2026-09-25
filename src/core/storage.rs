@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::models::SearchScopeFilter;
@@ -199,6 +200,31 @@ fn like_pattern(query: &str) -> String {
     }
     s.push('%');
     s
+}
+
+/// `q` → `q%`，转义 LIKE 元字符。用于 `search_files` 排序键里的「前缀匹配」档。
+fn prefix_pattern(query: &str) -> String {
+    let mut s = String::with_capacity(query.len() + 1);
+    for c in query.chars() {
+        if c == '%' || c == '_' || c == '\\' {
+            s.push('\\');
+        }
+        s.push(c);
+    }
+    s.push('%');
+    s
+}
+
+/// 「使用情况」全量快照：`recent` 的 (last_used, use_count) + `pins` 成员集合。
+///
+/// 存在的理由是**查询次数**：`recent_stats` / `is_pinned` 各自是一次 SQL，按候选逐个
+/// 调用就是 N×2 次查询。`search_files` 的候选上限从 100 提到数千之后，逐个查会直接
+/// 拖垮每次击键的搜索；而 `recent` 表本身有 200 行上限、`pins` 更小，一次全读进内存
+/// 是常数级成本，比按需查还便宜。
+#[derive(Default)]
+pub struct UsageStats {
+    pub recent: HashMap<String, (i64, i64)>,
+    pub pinned: HashSet<String>,
 }
 
 /// 取路径的直接父目录。
@@ -628,7 +654,29 @@ impl Storage {
             format!("SELECT {FILE_COLS} FROM files f WHERE f.name LIKE ? ESCAPE '\\'")
         };
         sql.push_str(&scope_sql(scope, &mut args));
-        sql.push_str(" ORDER BY length(f.name) ASC, f.mtime DESC LIMIT ?");
+        // ⚠️ 这个 ORDER BY 是**截断的守卫**，不是最终排名 —— 最终排名在 Rust 侧由
+        // `search::name_score` 决定（同档内保持这里的顺序，因为 `sort_by` 是稳定排序）。
+        //
+        // 为什么必须有档位键：原先只按 `length(f.name) ASC` 排，等于拿「名字短」当
+        // 「相关度高」的代理。但 `name_score` 的前三档（精确 100 / 前缀 85 / 词首 70）
+        // 是**常数分**，一批长名字的前缀匹配会被大量短名字的「包含」匹配整体挤出 LIMIT。
+        //
+        // 实测（本机 4.8 万文件，查询 `anim`）：总命中 223 条，其中**以 anim 开头**的
+        // 有 40 个 —— 按长度排序时它们全部落在第 100 名开外被切掉，于是这 40 个本该排在
+        // 最前的文件**一个都进不了前 50**（实测 0/40）。加上档位键后 40/40 全部进前 50。
+        //
+        // 加上档位键后，精确/前缀匹配无条件排在最前，截断只可能落在「其余」档内部 ——
+        // 而那一档的分数随名字长度单调递减，与 `length ASC` 方向一致，所以截断是安全的。
+        // 词首档（70）SQL 里难以干净表达（要枚举分隔符），交给调用方用足够大的候选上限覆盖。
+        sql.push_str(
+            " ORDER BY CASE \
+                 WHEN lower(f.name) = ? THEN 0 \
+                 WHEN lower(f.name) LIKE ? ESCAPE '\\' THEN 1 \
+                 ELSE 2 END ASC, \
+             length(f.name) ASC, f.mtime DESC LIMIT ?",
+        );
+        args.push(q.to_lowercase().into());
+        args.push(prefix_pattern(q).into());
         args.push((limit as i64).into());
         let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached(&sql)?;
@@ -913,6 +961,32 @@ impl Storage {
             .ok()
             .flatten()
             .is_some()
+    }
+
+    /// 一次读全「使用情况」，供排序阶段在内存里查。
+    ///
+    /// 单条查询失败时返回空集合而不是报错：使用统计只是**加分项**，读不到就当作没有，
+    /// 不该让整个搜索失败。
+    pub fn usage_stats(&self) -> UsageStats {
+        let conn = self.conn.lock();
+        let mut stats = UsageStats::default();
+        if let Ok(mut stmt) = conn.prepare("SELECT item_id, last_used, use_count FROM recent") {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            }) {
+                for (id, last, count) in rows.flatten() {
+                    stats.recent.insert(id, (last, count));
+                }
+            }
+        }
+        if let Ok(mut stmt) = conn.prepare("SELECT item_id FROM pins") {
+            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                for id in rows.flatten() {
+                    stats.pinned.insert(id);
+                }
+            }
+        }
+        stats
     }
 
     pub fn add_pin(&self, e: &EntryRecord) -> Result<()> {

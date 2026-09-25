@@ -1,7 +1,7 @@
 //! 搜索引擎：ISearchProvider 契约、极速搜索（应用 + FTS5 文件名 + 剪贴板）、
 //! 智能搜索（自然语言意图解析 + 正文全文检索 + 可插拔向量后端）。
 
-use crate::core::storage::{AppRecord, ClipRecord, EntryRecord, FileRecord, Storage};
+use crate::core::storage::{AppRecord, ClipRecord, EntryRecord, FileRecord, Storage, UsageStats};
 use crate::models::{IntentChip, ItemType, SearchItemModel, SearchMode, SearchRequest, SearchResponse, SearchScopeFilter};
 use chrono::{Datelike, Local, TimeZone};
 use parking_lot::RwLock;
@@ -204,10 +204,18 @@ pub fn app_to_item(a: &AppRecord) -> SearchItemModel {
     }
 }
 
+/// `file_to_item` 的 id 规则。
+///
+/// 抽出来是因为排序阶段**要先于 item 构造**拿到这个 id —— 使用统计（`recent` / `pins`）
+/// 就是按它索引的。两处各写一遍 format! 迟早漂移。
+fn file_item_id(f: &FileRecord) -> String {
+    format!("{}:{}", if f.is_dir { "folder" } else { "file" }, f.path)
+}
+
 pub fn file_to_item(f: &FileRecord) -> SearchItemModel {
     let item_type = if f.is_dir { ItemType::Folder } else { ItemType::File };
     SearchItemModel {
-        id: format!("{}:{}", if f.is_dir { "folder" } else { "file" }, f.path),
+        id: file_item_id(f),
         item_type,
         title: f.name.clone(),
         subtitle: short_dir(&f.path),
@@ -484,6 +492,64 @@ fn name_score(name: &str, query: &str) -> f32 {
     0.0
 }
 
+/// 文件名检索的**候选上限** —— 不是显示条数（显示条数由 `limit` 决定）。
+///
+/// 为什么需要留余量：SQL 的 `ORDER BY` 只能**近似** `name_score`（详见
+/// `storage::search_files` 里档位键的注释）。原先这里是 `limit * 2` = 100 条。
+///
+/// ⚠️ 3000 保护的主要是**词首档（70 分）** —— 精确/前缀档已经被 SQL 的档位键
+/// 无条件提到最前，即使 cap 只有 100 也切不到它们。词首档没有对应的 SQL 表达
+/// （要枚举分隔符），只能靠「候选取得足够多」来覆盖。
+///
+/// 3000 的依据（本机 4.8 万文件实测）：除 `png`(1.5 万命中) / `jpg`(1 万) 这类极端
+/// 查询外，命中数都远低于 3000，等于**不截断**；极端查询下被丢掉的也是名字最长的那些，
+/// 即「包含」档里分最低的，不影响前 50 条。
+const FILE_CANDIDATE_CAP: usize = 3000;
+
+/// 文件候选的**基础分**（不含使用统计）。
+///
+/// 排序阶段和 item 写回阶段必须走同一个公式，否则「排序用的分」和「显示出来的分」
+/// 会不一致 —— 用户会看到列表顺序和分数对不上。
+fn file_base_score(f: &FileRecord, q: &str) -> f32 {
+    let mut score = name_score(&f.name, q).max(20.0);
+    if f.is_dir {
+        score += 2.0;
+    }
+    let age_days = ((now_ts() - f.mtime).max(0) / 86_400) as f32;
+    score += (10.0 - age_days * 0.5).max(0.0);
+    score
+}
+
+/// 使用统计带来的**分数增量**。纯函数，不碰 item ——
+/// 排序发生在 item 构造之前，只有纯函数能在「还没有 item」的时候算分。
+///
+/// 它必须与 `apply_usage_bonus` 给出同一个数，这是两者共用同一段公式的原因。
+fn usage_bonus(item_id: &str, stats: &UsageStats) -> f32 {
+    let mut bonus = 0.0;
+    if let Some(&(last, count)) = stats.recent.get(item_id) {
+        let age_days = ((now_ts() - last).max(0) / 86_400) as f32;
+        bonus += (count as f32 * 4.0).min(30.0) + (12.0 - age_days * 2.0).max(0.0);
+    }
+    if stats.pinned.contains(item_id) {
+        bonus += 3.0;
+    }
+    bonus
+}
+
+/// 把使用加成写回 item：加分 + 记 `is_pinned` / `last_used` 两个字段。
+/// 数值部分与 `usage_bonus` 逐行对应，改动时两处要一起动。
+fn apply_usage_bonus(item: &mut SearchItemModel, stats: &UsageStats) {
+    if let Some(&(last, count)) = stats.recent.get(&item.id) {
+        let age_days = ((now_ts() - last).max(0) / 86_400) as f32;
+        item.score += (count as f32 * 4.0).min(30.0) + (12.0 - age_days * 2.0).max(0.0);
+        item.last_used = Some(last);
+    }
+    if stats.pinned.contains(&item.id) {
+        item.is_pinned = true;
+        item.score += 3.0;
+    }
+}
+
 impl SearchEngine {
     pub fn new(storage: Arc<Storage>) -> SearchEngine {
         let apps = storage.load_apps();
@@ -502,21 +568,10 @@ impl SearchEngine {
         self.embedding.name()
     }
 
-    fn boost_by_usage(&self, item: &mut SearchItemModel) {
-        if let Some((last, count)) = self.storage.recent_stats(&item.id) {
-            let age_days = ((now_ts() - last).max(0) / 86_400) as f32;
-            item.score += (count as f32 * 4.0).min(30.0) + (12.0 - age_days * 2.0).max(0.0);
-            item.last_used = Some(last);
-        }
-        if self.storage.is_pinned(&item.id) {
-            item.is_pinned = true;
-            item.score += 3.0;
-        }
-    }
-
     fn search_apps(&self, query: &str, limit: usize) -> Vec<SearchItemModel> {
         let q = query.to_lowercase();
         let q_nospace: String = q.chars().filter(|c| !c.is_whitespace()).collect();
+        let stats = self.storage.usage_stats();
         let apps = self.apps.read();
         let mut out: Vec<SearchItemModel> = Vec::new();
         for a in apps.iter() {
@@ -535,7 +590,7 @@ impl SearchEngine {
             if score > 0.0 {
                 let mut item = app_to_item(a);
                 item.score = score;
-                self.boost_by_usage(&mut item);
+                apply_usage_bonus(&mut item, &stats);
                 out.push(item);
             }
         }
@@ -546,24 +601,30 @@ impl SearchEngine {
 
     fn search_files(&self, query: &str, scope: &SearchScopeFilter, limit: usize) -> Vec<SearchItemModel> {
         let q = query.to_lowercase();
-        let recs = self.storage.search_files(query, scope, limit * 2).unwrap_or_default();
-        let mut out: Vec<SearchItemModel> = recs
+        let stats = self.storage.usage_stats();
+        let recs = self.storage.search_files(query, scope, FILE_CANDIDATE_CAP).unwrap_or_default();
+
+        // 先按「基础分 + 使用加成」排序，**只给选中的前 limit 条构造 item**。
+        // 反过来的话（先构造再丢掉 99%）`file_to_item` 的 path/name/subtitle 三次 clone
+        // 要对全部候选各做一遍 —— 这正是候选上限能从 100 提到 3000 的前提。
+        let mut ranked: Vec<(f32, usize)> = recs
             .iter()
-            .map(|f| {
+            .enumerate()
+            .map(|(i, f)| (file_base_score(f, &q) + usage_bonus(&file_item_id(f), &stats), i))
+            .collect();
+        ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.truncate(limit);
+
+        ranked
+            .iter()
+            .map(|&(_, i)| {
+                let f = &recs[i];
                 let mut item = file_to_item(f);
-                item.score = name_score(&f.name, &q).max(20.0);
-                if f.is_dir {
-                    item.score += 2.0;
-                }
-                let age_days = ((now_ts() - f.mtime).max(0) / 86_400) as f32;
-                item.score += (10.0 - age_days * 0.5).max(0.0);
-                self.boost_by_usage(&mut item);
+                item.score = file_base_score(f, &q);
+                apply_usage_bonus(&mut item, &stats);
                 item
             })
-            .collect();
-        out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        out.truncate(limit);
-        out
+            .collect()
     }
 
     fn search_clips(&self, query: &str, sub: &str, limit: usize) -> Vec<SearchItemModel> {
@@ -583,6 +644,8 @@ impl SearchEngine {
     /// 有任意 1~2 条（例如刚复制过剪贴板），就会整段跳过 136 个已扫描应用，
     /// 导致 560px 视口下方留下大片纯黑虚空。现改为分段混合流，各来源独立补足。
     fn idle_items(&self, scope: &SearchScopeFilter) -> Vec<SearchItemModel> {
+        // 一次读全 pins，别在 map 里逐条查（60 条就是 60 次 SQL，而空查询每次渲染都走这里）
+        let stats = self.storage.usage_stats();
         // ---- 1. 最近使用（来自 recent 表）----
         let mut recent: Vec<SearchItemModel> = self
             .storage
@@ -590,7 +653,7 @@ impl SearchEngine {
             .iter()
             .map(|e| entry_to_item(e, "最近使用"))
             .map(|mut i| {
-                i.is_pinned = self.storage.is_pinned(&i.id);
+                i.is_pinned = stats.pinned.contains(&i.id);
                 i
             })
             .collect();
@@ -720,6 +783,7 @@ impl SearchEngine {
 
     fn smart(&self, req: &SearchRequest) -> (Vec<SearchItemModel>, Vec<IntentChip>) {
         let intent = parse_intent(&req.query);
+        let stats = self.storage.usage_stats();
         let mut scope = req.scope.clone();
         if (scope.time_preset.is_empty() || scope.time_preset == "all") && !intent.time_preset.is_empty() {
             scope.time_preset = intent.time_preset.clone();
@@ -781,7 +845,7 @@ impl SearchEngine {
                     let snippet = hit.snippet.replace(['\n', '\r'], " ").trim().chars().take(70).collect::<String>();
                     item.reason = format!("内容匹配「{kw}」: {snippet}");
                     item.preview = snippet.clone();
-                    self.boost_by_usage(&mut item);
+                    apply_usage_bonus(&mut item, &stats);
                     merged
                         .entry(item.id.clone())
                         .and_modify(|e| {
@@ -908,5 +972,78 @@ mod tests {
         assert_eq!(resp.items[0].section, "应用");
         let resp = engine.search(&SearchRequest { query: "docker".into(), category: "clipboard".into(), ..Default::default() });
         assert_eq!(resp.items.len(), 1);
+    }
+
+    /// 回归：候选截断不得吃掉高分文件。
+    ///
+    /// 旧实现是 `ORDER BY length(f.name) ASC ... LIMIT limit*2`（50×2 = 100 条），
+    /// 等于拿「名字短」当「相关度高」的代理。这里造 120 个短名字的**包含**匹配
+    /// （`xchat0.txt`…，各 10~12 字符，各 53 分），再加 1 个长名字的**前缀**匹配
+    /// （`chatgpt_…`，39 字符，85 分）—— 按长度排序时目标排在第 121 位，被 LIMIT 100
+    /// 直接切掉，Rust 侧的 `name_score` 根本没机会看到它。
+    ///
+    /// 真机同形证据（本机 4.8 万文件，查询 `anim`）：总命中 223 条，其中**以 anim 开头**
+    /// 的 40 个全部落在第 100 名开外被切掉 —— 这 40 个本该排最前的文件，前 50 里一个都没有
+    /// （实测 0/40）。加上档位键后 40/40 全部进前 50。
+    ///
+    /// 注意：这个测试**不**依赖「前缀档是否超过 50 个」。它验证的是「截断会整档吃掉高分
+    /// 文件」这个机制本身 —— 真实库里只有当高分档数量 <= 50 时才会造成用户可见的差异
+    /// （32 个候选查询里命中 1 个），但那种情况下后果是整档消失，不是少一两条。
+    #[test]
+    fn prefix_match_survives_candidate_truncation() {
+        let storage = Arc::new(Storage::open_in_memory().unwrap());
+        let mut recs: Vec<FileRecord> = Vec::new();
+        for i in 0..120 {
+            let name = format!("xchat{i}.txt");
+            recs.push(FileRecord {
+                path: format!("D:\\t\\{name}"),
+                name,
+                ext: "txt".into(),
+                mtime: now_ts(),
+                ..Default::default()
+            });
+        }
+        let target = "chatgpt_personal_card_stripe_console.txt";
+        recs.push(FileRecord {
+            path: format!("D:\\t\\{target}"),
+            name: target.into(),
+            ext: "txt".into(),
+            mtime: now_ts(),
+            ..Default::default()
+        });
+        storage.upsert_files(&recs).unwrap();
+
+        let engine = SearchEngine::new(storage);
+        let resp = engine.search(&SearchRequest { query: "chat".into(), category: "all".into(), ..Default::default() });
+        let titles: Vec<&String> = resp.items.iter().map(|i| &i.title).collect();
+        assert!(
+            titles.iter().any(|t| *t == target),
+            "前缀匹配的长名字被候选截断吃掉了（这正是旧实现的缺陷）；实际返回 {} 条",
+            titles.len()
+        );
+        assert_eq!(resp.items[0].title, target, "前缀匹配 85 分应当排第一，实际 {:?}", titles.first());
+    }
+
+    /// 回归：`usage_bonus`（排序用）与 `apply_usage_bonus`（写回用）必须给出同一个数。
+    ///
+    /// 它们是同一段公式的两份实现 —— 一旦漂移，列表顺序会和显示出来的分数对不上，
+    /// 而且这种不一致不会有任何编译期或运行期报错。
+    #[test]
+    fn usage_bonus_matches_applied_bonus() {
+        let id = "file:D:\\t\\a.txt";
+        let last = now_ts() - 3600;
+        let mut stats = UsageStats::default();
+        stats.recent.insert(id.into(), (last, 7));
+        stats.pinned.insert(id.into());
+
+        let mut item = SearchItemModel { id: id.into(), ..Default::default() };
+        let before = item.score;
+        apply_usage_bonus(&mut item, &stats);
+        let applied = item.score - before;
+
+        let pure = usage_bonus(id, &stats);
+        assert!((applied - pure).abs() < 1e-4, "排序用 {pure} 与写回用 {applied} 不一致");
+        assert!(item.is_pinned, "置顶标记应当写回");
+        assert_eq!(item.last_used, Some(last), "最近使用时间应当写回");
     }
 }
