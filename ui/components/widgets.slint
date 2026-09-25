@@ -180,6 +180,10 @@ export component PillSelect inherits Rectangle {
     in property <[SelectOption]> options;
     in-out property <string> value;
     in property <length> menu-width: 220px;
+    // 弹出菜单底色。默认跟随主窗口的蓝黑浮层；设置页传中性灰（Theme.sp-popover），
+    // 否则一整页灰底里会突然冒出一块蓝黑下拉 —— 控件是共享的，
+    // 所以用「可选属性 + 默认值」而不是改全局 token（改全局会连累主窗口）。
+    in property <color> menu-bg: Theme.popover-bg;
     callback changed(string);
     in property <string> label;
     property <string> picked-label;
@@ -216,7 +220,7 @@ export component PillSelect inherits Rectangle {
         y: root.height + 4px;
         width: root.menu-width;
         Rectangle {
-            background: Theme.popover-bg;
+            background: root.menu-bg;
             border-radius: 10px;
             border-width: 1px;
             border-color: Theme.border;

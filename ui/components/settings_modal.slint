@@ -90,7 +90,7 @@ component NavItem inherits Rectangle {
     //   .active::before：left 0 / top 11px / 3×16 / radius 2px / 白 0.85 / 0 0 6px 白 0.35
     height: 38px;
     border-radius: 6px;
-    background: active ? Theme.hover : (ta.has-hover ? Theme.subtle : transparent);
+    background: active ? Theme.sp-hover : (ta.has-hover ? Theme.sp-subtle : transparent);
     animate background { duration: Theme.fast; }
     if root.active : Rectangle {
         x: 0px; y: 11px; width: 3px; height: 16px; border-radius: 2px;
@@ -102,14 +102,14 @@ component NavItem inherits Rectangle {
         Icon {
             name: root.icon;
             size: 15px;
-            tint: root.active ? Theme.text-primary : Theme.text-soft;
+            tint: root.active ? Theme.sp-text : Theme.sp-text-dim;
             y: (root.height - self.height) / 2;
         }
         Text {
             text: root.label;
             font-size: 13px;
             font-weight: root.active ? 500 : 400;
-            color: root.active ? Theme.text-primary : Theme.text-soft;
+            color: root.active ? Theme.sp-text : Theme.sp-text-dim;
             vertical-alignment: center;
         }
     }
@@ -125,16 +125,16 @@ component Group inherits VerticalLayout {
         text: root.title;
         font-size: 11px;
         font-weight: 600;
-        color: Theme.dark ? #ffffff8c : #0000008c;
+        color: Theme.sp-text-muted;
         letter-spacing: 0.5px;
     }
     Rectangle {
         // 设计稿 .settings-card-container：
         //   bg rgba(255,255,255,0.038) / border 1px rgba(255,255,255,0.08) / radius 8px
         border-radius: 8px;
-        background: Theme.dark ? #ffffff0a : #0000000a;
+        background: Theme.sp-card;
         border-width: 1px;
-        border-color: Theme.dark ? #ffffff14 : #00000014;
+        border-color: Theme.sp-border-subtle;
         VerticalLayout {
             padding: 2px;
             spacing: 0px;
@@ -155,12 +155,12 @@ component Row inherits Rectangle {
         padding-left: 16px; padding-right: 16px; spacing: 12px;
         VerticalLayout {
             alignment: center; spacing: 3px; horizontal-stretch: 1;
-            Text { text: root.label; font-size: 13px; font-weight: 500; color: Theme.text-primary; overflow: elide; }
-            Text { text: root.desc; font-size: 11px; color: Theme.dark ? #ffffff99 : #00000099; overflow: elide; }
+            Text { text: root.label; font-size: 13px; font-weight: 500; color: Theme.sp-text; overflow: elide; }
+            Text { text: root.desc; font-size: 11px; color: Theme.sp-text-dim; overflow: elide; }
         }
         VerticalLayout { alignment: center; @children }
     }
-    if root.divider : Rectangle { y: root.height - 1px; height: 1px; x: 12px; width: root.width - 24px; background: Theme.border-subtle; }
+    if root.divider : Rectangle { y: root.height - 1px; height: 1px; x: 12px; width: root.width - 24px; background: Theme.sp-border-subtle; }
 }
 
 component PaneHeader inherits VerticalLayout {
@@ -173,13 +173,13 @@ component PaneHeader inherits VerticalLayout {
         text: root.title;
         font-size: 20px;
         font-weight: 600;
-        color: Theme.text-primary;
+        color: Theme.sp-text;
         letter-spacing: -0.2px;
     }
     Text {
         text: root.desc;
         font-size: 12px;
-        color: Theme.dark ? #ffffff99 : #00000099;
+        color: Theme.sp-text-dim;
         wrap: word-wrap;
     }
 }
@@ -189,7 +189,7 @@ component HotkeyCard inherits Rectangle {
     in property <bool> recording: false;
     height: 58px;
     border-radius: 8px;
-    background: ta.has-hover ? Theme.hover : Theme.subtle;
+    background: ta.has-hover ? Theme.sp-hover : Theme.sp-subtle;
     opacity: b.enabled ? 1 : 0.55;
     animate background { duration: Theme.fast; }
     ta := TouchArea { }
@@ -200,10 +200,10 @@ component HotkeyCard inherits Rectangle {
             alignment: center; spacing: 3px; horizontal-stretch: 1;
             HorizontalLayout {
                 spacing: 8px; alignment: start;
-                Text { text: root.b.name; font-size: 12.5px; font-weight: 600; color: Theme.text-primary; overflow: elide; max-width: 220px; }
+                Text { text: root.b.name; font-size: 12.5px; font-weight: 600; color: Theme.sp-text; overflow: elide; max-width: 220px; }
                 Badge { text: root.b.badge; }
             }
-            Text { text: root.b.path; font-size: 10.5px; font-family: Theme.mono; color: Theme.text-tertiary; overflow: elide; }
+            Text { text: root.b.path; font-size: 10.5px; font-family: Theme.mono; color: Theme.sp-text-dim; overflow: elide; }
         }
         Rectangle {
             width: cap.width; height: 26px; y: 16px;
@@ -219,9 +219,9 @@ component HotkeyCard inherits Rectangle {
 export component SettingsModal inherits Rectangle {
     callback close;
     border-radius: 12px;
-    background: Theme.dark ? #121620d9 : #fcfdfff0;
+    background: Theme.sp-bg;
     border-width: 1px;
-    border-color: Theme.dark ? #ffffff24 : #0000001a;
+    border-color: Theme.sp-border;
     drop-shadow-blur: 60px;
     drop-shadow-offset-y: 24px;
     drop-shadow-color: #0000008c;
@@ -233,10 +233,10 @@ export component SettingsModal inherits Rectangle {
             // 设计稿 .settings-sidebar：width 195px / padding 18px 10px /
             //   bg rgba(16,20,28,0.32) / border-right 1px rgba(255,255,255,0.08)
             width: 195px;
-            background: Theme.sidebar-bg;
+            background: Theme.sp-sidebar;
             Rectangle {
                 x: parent.width - 1px; width: 1px;
-                background: Theme.dark ? #ffffff14 : #00000014;
+                background: Theme.sp-border-subtle;
             }
             VerticalLayout {
                 padding-top: 18px; padding-right: 10px; padding-bottom: 18px; padding-left: 10px;
@@ -254,13 +254,13 @@ export component SettingsModal inherits Rectangle {
                             width: 24px; height: 24px; border-radius: 6px;
                             background: @linear-gradient(135deg, #ffffff2e 0%, #ffffff0a 100%);
                             border-width: 1px; border-color: #ffffff2e;
-                            Icon { name: "lightning"; size: 12px; tint: Theme.text-primary; x: 6px; y: 6px; }
+                            Icon { name: "lightning"; size: 12px; tint: Theme.sp-text; x: 6px; y: 6px; }
                         }
                         // .settings-sidebar-brand-title：13.5px / 600 / #fff / letter-spacing 0.2px
                         Text {
                             text: "Anycast 设置";
                             font-size: 13.5px; font-weight: 600;
-                            color: Theme.text-primary;
+                            color: Theme.sp-text;
                             letter-spacing: 0.2px;
                             vertical-alignment: center;
                         }
@@ -268,7 +268,7 @@ export component SettingsModal inherits Rectangle {
                     Rectangle {
                         y: parent.height - 1px; height: 1px;
                         x: 8px; width: parent.width - 16px;
-                        background: Theme.dark ? #ffffff0f : #0000000f;
+                        background: Theme.sp-border-subtle;
                     }
                 }
                 NavItem { icon: "settings"; label: "常规设置"; active: Settings.tab == "general"; clicked => { Settings.tab = "general"; } }
@@ -283,7 +283,8 @@ export component SettingsModal inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
             // 设计稿 .settings-content-pane { background: rgba(255,255,255,0.012) }
-            background: Theme.dark ? #ffffff03 : #00000003;
+            // 内容区与面板同底色：参考面板里「主区 = 背景」，抬升感交给卡片自己表达
+            background: transparent;
             ScrollView {
                 vertical-scrollbar-policy: ScrollBarPolicy.always-off;
                 horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
@@ -317,7 +318,7 @@ export component SettingsModal inherits Rectangle {
                         Group {
                             title: "界面与交互偏好";
                             Row { label: "默认初始搜索模式"; desc: "呼出窗口时默认采用的搜索模式（按 Tab 键可随时切换）";
-                                PillSelect { value: Settings.default-mode; label: Settings.default-mode == "smart" ? "✦ AI 智能模式" : "⚡ 极速模式 (默认)"; options: [{ value: "fast", label: "⚡ 极速模式 (默认)" }, { value: "smart", label: "✦ AI 智能模式" }]; changed(v) => { Settings.set-string("default_mode", v); } } }
+                                PillSelect { menu-bg: Theme.sp-popover; value: Settings.default-mode; label: Settings.default-mode == "smart" ? "✦ AI 智能模式" : "⚡ 极速模式 (默认)"; options: [{ value: "fast", label: "⚡ 极速模式 (默认)" }, { value: "smart", label: "✦ AI 智能模式" }]; changed(v) => { Settings.set-string("default_mode", v); } } }
                             Row { label: "双击条目立即执行"; desc: "在列表项或图标卡片上双击时直接通过系统关联程序打开"; divider: false;
                                 FluentSwitch { checked: Settings.double-click; toggled(v) => { Settings.set-bool("double_click_launch", v); } } }
                         }
@@ -336,7 +337,7 @@ export component SettingsModal inherits Rectangle {
                         Group {
                             title: "亚克力透光材质 (Acrylic Material)";
                             Row { label: "材质透光度预设档位"; desc: "调节窗口磨砂毛玻璃透光比例与桌面环境融合度";
-                                PillSelect { value: Settings.opacity-preset; label: Settings.opacity-preset == "high" ? "高透灵动 (58% 强毛玻璃)" : Settings.opacity-preset == "solid" ? "沉稳聚焦 (86% 强对比)" : "平衡清晰 (72% 推荐)"; menu-width: 240px; options: [{ value: "balanced", label: "平衡清晰 (72% 推荐)" }, { value: "high", label: "高透灵动 (58% 强毛玻璃)" }, { value: "solid", label: "沉稳聚焦 (86% 强对比)" }]; changed(v) => { Settings.set-string("acrylic_opacity", v); } } }
+                                PillSelect { menu-bg: Theme.sp-popover; value: Settings.opacity-preset; label: Settings.opacity-preset == "high" ? "高透灵动 (58% 强毛玻璃)" : Settings.opacity-preset == "solid" ? "沉稳聚焦 (86% 强对比)" : "平衡清晰 (72% 推荐)"; menu-width: 240px; options: [{ value: "balanced", label: "平衡清晰 (72% 推荐)" }, { value: "high", label: "高透灵动 (58% 强毛玻璃)" }, { value: "solid", label: "沉稳聚焦 (86% 强对比)" }]; changed(v) => { Settings.set-string("acrylic_opacity", v); } } }
                             Row { label: "系统级 DWM 亚克力模糊"; desc: "调用 Windows 11 DWM Acrylic 背景材质进行硬件加速高斯模糊";
                                 FluentSwitch { checked: Settings.gpu-blur; toggled(v) => { Settings.set-bool("gpu_blur", v); } } }
                             Row { label: "边缘高光与微晶质感"; desc: "在窗体顶部呈现 1px 晶莹高光边框以增强立体纵深感"; divider: false;
@@ -365,20 +366,20 @@ export component SettingsModal inherits Rectangle {
                         }
                         if Settings.add-open : Rectangle {
                             border-radius: 8px;
-                            background: Theme.card-bg;
+                            background: Theme.sp-card;
                             border-width: 1px;
-                            border-color: Theme.border;
+                            border-color: Theme.sp-border;
                             height: addBody.preferred-height;
                             addBody := VerticalLayout {
                                 padding: 14px;
                                 spacing: 10px;
                                 HorizontalLayout {
-                                    Text { text: "新建快捷键绑定"; font-size: 12.5px; font-weight: 600; color: Theme.text-primary; horizontal-stretch: 1; vertical-alignment: center; }
+                                    Text { text: "新建快捷键绑定"; font-size: 12.5px; font-weight: 600; color: Theme.sp-text; horizontal-stretch: 1; vertical-alignment: center; }
                                     GhostButton { icon: "x"; btn-height: 20px; btn-radius: 4px; padding-x: 3.5px; clicked => { Settings.add-open = false; Settings.action("cancel-hotkey"); } }
                                 }
-                                Text { text: "绑定目标名称"; font-size: 11px; color: Theme.text-tertiary; }
+                                Text { text: "绑定目标名称"; font-size: 11px; color: Theme.sp-text-dim; }
                                 TextField { text <=> Settings.new-name; placeholder: "例如：Photoshop、工作笔记、下载目录"; }
-                                Text { text: "程序或文件完整路径"; font-size: 11px; color: Theme.text-tertiary; }
+                                Text { text: "程序或文件完整路径"; font-size: 11px; color: Theme.sp-text-dim; }
                                 HorizontalLayout {
                                     spacing: 8px;
                                     TextField { text <=> Settings.new-path; placeholder: "例如：C:\\Program Files\\...\\app.exe 或 D:\\Docs"; mono: true; horizontal-stretch: 1; }
@@ -388,18 +389,18 @@ export component SettingsModal inherits Rectangle {
                                         picker := PopupWindow {
                                             x: -200px; y: 34px; width: 290px;
                                             Rectangle {
-                                                background: Theme.popover-bg; border-radius: 10px; border-width: 1px; border-color: Theme.border;
+                                                background: Theme.sp-popover; border-radius: 10px; border-width: 1px; border-color: Theme.sp-border;
                                                 drop-shadow-blur: 24px; drop-shadow-color: #00000073; drop-shadow-offset-y: 10px;
                                                 VerticalLayout {
                                                     padding: 6px; spacing: 1px;
-                                                    if Settings.recent-picker.length == 0 : Text { text: "暂无可用的最近记录"; font-size: 11px; color: Theme.text-muted; horizontal-alignment: center; height: 30px; vertical-alignment: center; }
+                                                    if Settings.recent-picker.length == 0 : Text { text: "暂无可用的最近记录"; font-size: 11px; color: Theme.sp-text-muted; horizontal-alignment: center; height: 30px; vertical-alignment: center; }
                                                     for it[i] in Settings.recent-picker : Rectangle {
                                                         height: 32px; border-radius: 6px;
-                                                        background: pta.has-hover ? Theme.hover : transparent;
+                                                        background: pta.has-hover ? Theme.sp-hover : transparent;
                                                         HorizontalLayout {
                                                             padding-left: 6px; padding-right: 6px; spacing: 8px;
                                                             Squircle { icon: it.icon; size: 22px; y: 5px; }
-                                                            Text { text: it.title; font-size: 12px; color: Theme.text-primary; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                                            Text { text: it.title; font-size: 12px; color: Theme.sp-text; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                                                             Badge { text: it.badge; y: 7px; }
                                                         }
                                                         pta := TouchArea { mouse-cursor: pointer; clicked => { Settings.pick-recent(i); } }
@@ -414,12 +415,12 @@ export component SettingsModal inherits Rectangle {
                                     spacing: 16px;
                                     VerticalLayout {
                                         spacing: 6px; horizontal-stretch: 1;
-                                        Text { text: "目标类型"; font-size: 11px; color: Theme.text-tertiary; }
-                                        PillSelect { value: Settings.new-kind; label: Settings.new-kind == "folder" ? "📁 文件夹目录" : Settings.new-kind == "file" ? "📄 文件 / 代码文档" : Settings.new-kind == "script" ? "⌨️ 脚本 (.bat / .ps1)" : "🚀 应用程序 (.exe / .lnk)"; options: [{ value: "app", label: "🚀 应用程序 (.exe / .lnk)" }, { value: "folder", label: "📁 文件夹目录" }, { value: "file", label: "📄 文件 / 代码文档" }, { value: "script", label: "⌨️ 脚本 (.bat / .ps1)" }]; changed(v) => { Settings.new-kind = v; } }
+                                        Text { text: "目标类型"; font-size: 11px; color: Theme.sp-text-dim; }
+                                        PillSelect { menu-bg: Theme.sp-popover; value: Settings.new-kind; label: Settings.new-kind == "folder" ? "📁 文件夹目录" : Settings.new-kind == "file" ? "📄 文件 / 代码文档" : Settings.new-kind == "script" ? "⌨️ 脚本 (.bat / .ps1)" : "🚀 应用程序 (.exe / .lnk)"; options: [{ value: "app", label: "🚀 应用程序 (.exe / .lnk)" }, { value: "folder", label: "📁 文件夹目录" }, { value: "file", label: "📄 文件 / 代码文档" }, { value: "script", label: "⌨️ 脚本 (.bat / .ps1)" }]; changed(v) => { Settings.new-kind = v; } }
                                     }
                                     VerticalLayout {
                                         spacing: 6px; horizontal-stretch: 1;
-                                        Text { text: "快捷键组合 (点击录制)"; font-size: 11px; color: Theme.text-tertiary; }
+                                        Text { text: "快捷键组合 (点击录制)"; font-size: 11px; color: Theme.sp-text-dim; }
                                         Rectangle {
                                             height: 30px;
                                             nk := Keycap { label: Settings.recording-id == "__new__" ? "按下快捷键组合..." : Settings.new-combo; recording: Settings.recording-id == "__new__"; }
@@ -436,17 +437,17 @@ export component SettingsModal inherits Rectangle {
                         }
                         VerticalLayout {
                             spacing: 6px;
-                            Text { text: "已配置的快捷直达项目"; font-size: 11px; font-weight: 600; color: Theme.dark ? #ffffff8c : #0000008c; letter-spacing: 0.5px; }
+                            Text { text: "已配置的快捷直达项目"; font-size: 11px; font-weight: 600; color: Theme.sp-text-muted; letter-spacing: 0.5px; }
                             if Settings.hotkeys.length == 0 : Rectangle {
-                                height: 64px; border-radius: 8px; background: Theme.card-bg; border-width: 1px; border-color: Theme.border-subtle;
-                                Text { text: "暂无快捷直达绑定，点击右上角「添加绑定」开始配置"; font-size: 11.5px; color: Theme.text-tertiary; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                                height: 64px; border-radius: 8px; background: Theme.sp-card; border-width: 1px; border-color: Theme.sp-border-subtle;
+                                Text { text: "暂无快捷直达绑定，点击右上角「添加绑定」开始配置"; font-size: 11.5px; color: Theme.sp-text-dim; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
                             }
                             for hk in Settings.hotkeys : HotkeyCard { b: hk; recording: Settings.recording-id == hk.id; }
                         }
                         HorizontalLayout {
                             spacing: 8px;
-                            Icon { name: "info"; size: 13px; tint: Theme.text-tertiary; y: 1px; }
-                            Text { text: "建议优先使用 Alt + 单键 或 Ctrl + Shift + 单键，避开系统内置的全局快捷键（如 Ctrl+C、Win+L 等）。保存时会自动探测系统与其他程序的占用冲突。"; font-size: 11px; color: Theme.text-tertiary; wrap: word-wrap; horizontal-stretch: 1; }
+                            Icon { name: "info"; size: 13px; tint: Theme.sp-text-dim; y: 1px; }
+                            Text { text: "建议优先使用 Alt + 单键 或 Ctrl + Shift + 单键，避开系统内置的全局快捷键（如 Ctrl+C、Win+L 等）。保存时会自动探测系统与其他程序的占用冲突。"; font-size: 11px; color: Theme.sp-text-dim; wrap: word-wrap; horizontal-stretch: 1; }
                         }
                     }
 
@@ -471,7 +472,7 @@ export component SettingsModal inherits Rectangle {
                                 height: 76px;
                                 VerticalLayout {
                                     padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
-                                    Text { text: "索引目录（以分号分隔，保存后重建索引生效）"; font-size: 12.5px; color: Theme.text-primary; }
+                                    Text { text: "索引目录（以分号分隔，保存后重建索引生效）"; font-size: 12.5px; color: Theme.sp-text; }
                                     HorizontalLayout {
                                         spacing: 8px;
                                         TextField { text <=> Settings.index-roots; placeholder: "C:\\Users\\me\\Desktop; D:\\Projects"; mono: true; horizontal-stretch: 1; }
@@ -500,7 +501,7 @@ export component SettingsModal inherits Rectangle {
                             Row { label: "启用剪贴板监控"; desc: "在系统后台捕获剪贴板文本变动，提供历史检索服务";
                                 FluentSwitch { checked: Settings.clip-enabled; toggled(v) => { Settings.set-bool("clipboard_enabled", v); } } }
                             Row { label: "最大历史保留容量"; desc: "超出设定容量后自动清理未置顶固定的最旧历史项目";
-                                PillSelect { value: Settings.clip-limit; label: Settings.clip-limit + " 条"; menu-width: 160px; options: [{ value: "100", label: "100 条" }, { value: "300", label: "300 条" }, { value: "500", label: "500 条 (推荐)" }, { value: "1000", label: "1000 条" }]; changed(v) => { Settings.set-string("clipboard_limit", v); } } }
+                                PillSelect { menu-bg: Theme.sp-popover; value: Settings.clip-limit; label: Settings.clip-limit + " 条"; menu-width: 160px; options: [{ value: "100", label: "100 条" }, { value: "300", label: "300 条" }, { value: "500", label: "500 条 (推荐)" }, { value: "1000", label: "1000 条" }]; changed(v) => { Settings.set-string("clipboard_limit", v); } } }
                             Row { label: "相同内容自动合并置顶"; desc: "再次复制历史中已存在的内容时，自动刷新时间戳并移至首位"; divider: false;
                                 FluentSwitch { checked: Settings.clip-dedupe; toggled(v) => { Settings.set-bool("clipboard_dedupe", v); } } }
                         }
@@ -544,6 +545,7 @@ export component SettingsModal inherits Rectangle {
                             title: "判断模型后端";
                             Row { label: "后端模式"; desc: "规则解析离线、毫秒级；云端 Jev 理解力更强，但需联网且按次计费";
                                 PillSelect {
+                                    menu-bg: Theme.sp-popover;
                                     value: Settings.ai-backend;
                                     label: Settings.ai-backend == "rule" ? "🔒 纯本地规则（零网络）"
                                         : Settings.ai-backend == "jev" ? "☁️ 云端 Jev（强制）"
@@ -575,7 +577,7 @@ export component SettingsModal inherits Rectangle {
                                 height: 76px;
                                 VerticalLayout {
                                     padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
-                                    Text { text: "API 端点"; font-size: 12.5px; color: Theme.text-primary; }
+                                    Text { text: "API 端点"; font-size: 12.5px; color: Theme.sp-text; }
                                     HorizontalLayout {
                                         spacing: 8px;
                                         TextField {
@@ -593,7 +595,7 @@ export component SettingsModal inherits Rectangle {
                                 height: 76px;
                                 VerticalLayout {
                                     padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
-                                    Text { text: "API Key（明文存于本地配置；环境变量 TYPESAFE_API_KEY / JEV_API_KEY 优先级更高）"; font-size: 12.5px; color: Theme.text-primary; }
+                                    Text { text: "API Key（明文存于本地配置；环境变量 TYPESAFE_API_KEY / JEV_API_KEY 优先级更高）"; font-size: 12.5px; color: Theme.sp-text; }
                                     HorizontalLayout {
                                         spacing: 8px;
                                         TextField {
@@ -612,7 +614,7 @@ export component SettingsModal inherits Rectangle {
                                 height: 76px;
                                 VerticalLayout {
                                     padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
-                                    Text { text: "模型名"; font-size: 12.5px; color: Theme.text-primary; }
+                                    Text { text: "模型名"; font-size: 12.5px; color: Theme.sp-text; }
                                     HorizontalLayout {
                                         spacing: 8px;
                                         TextField {
@@ -630,7 +632,7 @@ export component SettingsModal inherits Rectangle {
                                 height: 76px;
                                 VerticalLayout {
                                     padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
-                                    Text { text: "代理（留空 = 跟随系统代理）"; font-size: 12.5px; color: Theme.text-primary; }
+                                    Text { text: "代理（留空 = 跟随系统代理）"; font-size: 12.5px; color: Theme.sp-text; }
                                     HorizontalLayout {
                                         spacing: 8px;
                                         TextField {
@@ -655,10 +657,10 @@ export component SettingsModal inherits Rectangle {
     //   hover: bg 0.09 + border 0.12 + color #fff）
     Rectangle {
         x: parent.width - 44px; y: 14px; width: 28px; height: 28px; border-radius: 6px;
-        background: cta.has-hover ? (Theme.dark ? #ffffff17 : #00000017) : transparent;
+        background: cta.has-hover ? Theme.sp-hover : transparent;
         Icon {
             name: "x"; size: 14px;
-            tint: cta.has-hover ? Theme.text-primary : (Theme.dark ? #ffffff99 : #00000099);
+            tint: cta.has-hover ? Theme.sp-text : (Theme.sp-text-dim);
             x: 7px; y: 7px;
         }
         cta := TouchArea { mouse-cursor: pointer; clicked => { root.close(); } }

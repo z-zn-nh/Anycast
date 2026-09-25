@@ -37,6 +37,30 @@ export global Theme {
     out property <color> switch-on: dark ? #ffffff38 : #0f172a;
     out property <color> knob-on: dark ? #ffffff : #ffffff;
 
+    // ── 设置面板专属配色：中性灰（2026-09-25 迁移）──────────────────────
+    // 与主窗口的蓝黑基调（#14171f / slate 文字阶梯）**刻意分开**。
+    // 理由：主窗口是「扫一眼就走」的搜索面板，蓝黑更有科技感；设置页是长时间
+    // 停留、逐行读文字的地方，中性灰（无彩度）比蓝黑耐看，也不会让 accent 蓝
+    // 在整页里到处抢注意力。只作用于 ui/components/settings_modal.slint，
+    // 主窗口不动 —— 避免一处改色牵连全应用。
+    //
+    // 色阶取自参考面板实测（tools/png_probe.py 采样）：
+    //   背景 #282828 · 抬升面 #303030 · 胶囊 #393939 · 描边 #464646
+    //   正文 #ffffff · 次级 #a1a1a1 · 弱化 #787878
+    // 明度单调递增（越靠近用户越亮），沿用原设计稿的层级语义。
+    out property <color> sp-bg: dark ? #282828f2 : #f7f7f7f7;
+    out property <color> sp-sidebar: dark ? #242424 : #f0f0f0;
+    out property <color> sp-card: dark ? #303030 : #ffffff;
+    out property <color> sp-chip: dark ? #393939 : #ececec;
+    out property <color> sp-border: dark ? #464646 : #dcdcdc;
+    out property <color> sp-border-subtle: dark ? #3a3a3a : #e6e6e6;
+    out property <color> sp-text: dark ? #ffffff : #1a1a1a;
+    out property <color> sp-text-dim: dark ? #a1a1a1 : #5c5c5c;
+    out property <color> sp-text-muted: dark ? #787878 : #8a8a8a;
+    out property <color> sp-hover: dark ? #ffffff14 : #0000000d;
+    out property <color> sp-subtle: dark ? #ffffff0a : #00000008;
+    out property <color> sp-popover: dark ? #303030f2 : #fffffffa;
+
     out property <color> accent: #3b82f6;
     out property <color> ai: #8b5cf6;
     out property <color> ai-soft: #8b5cf629;
