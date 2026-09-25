@@ -232,29 +232,16 @@ def keys(combo):
 
 def typetext(s):
     force_foreground(find_window())
-    # 含非 ASCII 字符就整串走 Unicode 通道 —— 中文没有物理键，
-    # `VkKeyScanW` 映射不出来（见上面 `_type_unicode` 的注释）。
-    if any(ord(c) > 0x7F for c in s):
-        _type_unicode(s)
-        return
-    for ch in s:
-        vk = VK.get(ch)
-        if vk is None and len(ch) == 1:
-            vk = user32.VkKeyScanW(ord(ch)) & 0xFF
-        if vk:
-            shift = False
-            # VkKeyScanW 高字节 bit0 表示需要 shift
-            raw = user32.VkKeyScanW(ord(ch)) if len(ch) == 1 else 0
-            if raw != -1 and (raw >> 8) & 1:
-                shift = True
-            if shift:
-                _key(VK["shift"])
-            _key(vk)
-            time.sleep(0.02)
-            _key(vk, up=True)
-            if shift:
-                _key(VK["shift"], up=True)
-            time.sleep(0.04)
+    # ⚠️ **一律走 Unicode 通道**，不要用 keybd_event 打 ASCII。
+    #
+    # keybd_event 走的是「物理按键 → 键盘布局 → **输入法**」这条路。本机装着
+    # 中文输入法，实测把 "abc123" 打成了「按不出23」；更坑的是击键可能被 IME
+    # 吞进**未上屏的候选串** —— 界面上看着有内容（候选预览），
+    # 但 TextInput 的 text 还是空，于是「保存」读到空串。
+    # 这个假象骗过一次排查，一度误判成 Slint 的双向绑定失效。
+    #
+    # KEYEVENTF_UNICODE 直接送 UTF-16 码元，不经输入法，结果确定。
+    _type_unicode(s)
 
 
 # ---------------------------------------------------------------- 抓图

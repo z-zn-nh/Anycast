@@ -996,6 +996,20 @@ impl Gui {
         g.set_ai_lazy(s.ai_lazy_load);
         g.set_ai_intent(s.ai_intent_parsing);
         g.set_ai_model(ss(&format!("EmbeddingBackend: {} · bge-small-zh 待接入", self.core.engine.embedding_name())));
+        // ── 判断模型后端（Phase 2）──
+        // 状态文案一律由 `DecisionHub` 现算，不在界面里另写一套判断 ——
+        // 否则「界面说就绪、实际静默降级」这种漂移迟早会发生。
+        g.set_ai_backend(ss(&s.ai_backend_mode));
+        g.set_ai_cloud_fallback(s.ai_cloud_fallback);
+        g.set_ai_jev_endpoint(ss(&s.ai_jev_endpoint));
+        g.set_ai_jev_key(ss(&s.ai_jev_api_key));
+        g.set_ai_jev_model(ss(&s.ai_jev_model));
+        g.set_ai_jev_proxy(ss(&s.ai_jev_proxy));
+        let (cloud_desc, cloud_badge, cloud_ok) = self.core.decision.cloud_status(&s);
+        g.set_ai_cloud_status(ss(&cloud_desc));
+        g.set_ai_cloud_badge(ss(&cloud_badge));
+        g.set_ai_cloud_ok(cloud_ok);
+        g.set_ai_backend_status(ss(&self.core.decision.backend_status_line(&s)));
         self.sync_stats_to_ui();
         self.sync_hotkeys_to_ui();
         let recent: Vec<ResultItem> = self
@@ -1213,6 +1227,7 @@ impl Gui {
             "ai_enabled" => s.ai_enabled = v,
             "ai_lazy_load" => s.ai_lazy_load = v,
             "ai_intent_parsing" => s.ai_intent_parsing = v,
+            "ai_cloud_fallback" => s.ai_cloud_fallback = v,
             _ => {}
         });
         match key {
@@ -1225,6 +1240,11 @@ impl Gui {
             "content_index_enabled" if !v => self.toast("已关闭正文全文检索（索引数据保留）", "database"),
             "clipboard_enabled" => self.toast(
                 if v { "剪贴板监控已开启" } else { "剪贴板监控已暂停" }, "clipboard"),
+            // 云端回退的开关在界面上看不出任何变化（要等下一次低置信查询才生效），
+            // 所以必须给个明确反馈，否则用户会以为开关坏了。
+            "ai_cloud_fallback" => self.toast(
+                if v { "已允许升级到云端（仅「自动」模式生效）" } else { "已禁止升级到云端，全部本地解析" },
+                "globe"),
             _ => {}
         }
         if reindex {
@@ -1273,6 +1293,55 @@ impl Gui {
             "acrylic_opacity" => {
                 self.core.update_settings(|s| s.acrylic_opacity = v.clone());
                 self.apply_theme_from_settings();
+            }
+            // ── 判断模型后端（Phase 2）──
+            "ai_backend_mode" => {
+                // 白名单挡一下：写进一个拼错的模式会让 `cloud_backend` 一路落到
+                // `_ => false`，云端**静默不生效** —— 而界面上模式名还显示得好好的，
+                // 排查起来要翻到配置文件才看得出来。
+                if !matches!(v.as_str(), "auto" | "rule" | "laya" | "jev") {
+                    self.toast(&format!("未知的后端模式，已忽略：{v}"), "alert");
+                    return;
+                }
+                self.core.update_settings(|s| s.ai_backend_mode = v.clone());
+                self.toast("后端模式已切换，下一次查询即生效", "sparkles");
+            }
+            "ai_jev_endpoint" => {
+                let u = v.trim();
+                if !(u.starts_with("http://") || u.starts_with("https://")) {
+                    self.toast("端点必须以 http:// 或 https:// 开头，已忽略", "alert");
+                    return;
+                }
+                self.core.update_settings(|s| s.ai_jev_endpoint = u.to_string());
+                self.toast("云端端点已保存", "globe");
+            }
+            "ai_jev_api_key" => {
+                // 存空是**正常用法**（清掉本地 Key、改走环境变量），不是错误 ——
+                // 但得说清楚，否则用户会以为没保存上。
+                if v.trim().is_empty() {
+                    self.core.update_settings(|s| s.ai_jev_api_key.clear());
+                    self.toast("已清空本地 Key，将改从环境变量读取", "globe");
+                } else {
+                    self.core.update_settings(|s| s.ai_jev_api_key = v.trim().to_string());
+                    self.toast("API Key 已保存（明文存于本地配置）", "globe");
+                }
+            }
+            "ai_jev_model" => {
+                if v.trim().is_empty() {
+                    self.toast("模型名不能为空，已忽略", "alert");
+                    return;
+                }
+                self.core.update_settings(|s| s.ai_jev_model = v.trim().to_string());
+                self.toast("模型名已保存", "globe");
+            }
+            "ai_jev_proxy" => {
+                let p = v.trim();
+                if !p.is_empty() && !(p.starts_with("http://") || p.starts_with("https://")) {
+                    self.toast("代理必须以 http:// 或 https:// 开头（留空 = 跟随系统代理）", "alert");
+                    return;
+                }
+                self.core.update_settings(|s| s.ai_jev_proxy = p.to_string());
+                self.toast(if p.is_empty() { "已改为跟随系统代理" } else { "代理已保存" }, "globe");
             }
             _ => {}
         }

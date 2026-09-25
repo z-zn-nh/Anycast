@@ -133,6 +133,63 @@ impl DecisionHub {
         self.cloud_backend(settings).is_some()
     }
 
+    /// 设置页「云端连接」那一组的状态文案：`(说明, 徽标文字, 是否就绪)`。
+    ///
+    /// 关键是把「为什么没生效」直接写出来 —— 最常见的两种情况是
+    /// 「模式不允许联网」和「模式开了但没填 Key」，它们在界面上长得一模一样，
+    /// 用户只会以为功能坏了。
+    ///
+    /// 判据走 [`cloud_backend`](Self::cloud_backend) 本身，而不是在这里重写一遍
+    /// 那套 `allowed` / `resolve_credentials` 逻辑 —— 否则界面说的和实际做的会漂移，
+    /// 那比不显示状态更糟。
+    pub fn cloud_status(&self, settings: &AppSettings) -> (String, String, bool) {
+        let mode = settings.ai_backend_mode.as_str();
+        let allowed = match mode {
+            "jev" => true,
+            "auto" => settings.ai_cloud_fallback,
+            _ => false,
+        };
+        if !allowed {
+            let why = if mode == "rule" {
+                "已选「纯本地规则」，不会联网"
+            } else {
+                "「自动」模式下还需打开「低置信时升级到云端」"
+            };
+            return (why.to_string(), "○ 未启用".into(), false);
+        }
+        let key = JevBackend::resolve_credentials(&settings.ai_jev_endpoint, &settings.ai_jev_api_key);
+        if key.trim().is_empty() {
+            return (
+                "已启用云端，但没填 API Key —— 每次查询都会静默跳过模型".into(),
+                "⚠ 缺 Key".into(),
+                false,
+            );
+        }
+        // Key 从环境变量来的时候配置里是空的，说清楚免得用户以为没保存上
+        let from_env = if settings.ai_jev_api_key.trim().is_empty() { "（Key 来自环境变量）" } else { "" };
+        (
+            format!("{}{} · 模型 {}", settings.ai_jev_endpoint.trim(), from_env, settings.ai_jev_model),
+            "● 就绪".into(),
+            true,
+        )
+    }
+
+    /// 「本地推理后端」那一行：当前**实际**在用哪一级。
+    ///
+    /// 与 [`cloud_status`](Self::cloud_status) 分开，是因为这一行讲的是
+    /// 「查询会被怎么处理」，而那一组讲的是「云端连不连得上」。
+    pub fn backend_status_line(&self, settings: &AppSettings) -> String {
+        let cloud = self.cloud_backend(settings).is_some();
+        match (settings.ai_backend_mode.as_str(), cloud) {
+            ("rule", _) => "规则意图解析 + FTS5 正文检索 · 零网络请求".into(),
+            ("jev", true) => format!("云端 Jev（{}）· 强制跳过规则", settings.ai_jev_model),
+            ("jev", false) => "选了云端 Jev，但云端未就绪 → 已静默降级为规则".into(),
+            ("auto", true) => "规则优先；规则没把握时才升级到云端 Jev".into(),
+            ("auto", false) => "规则意图解析 + FTS5 正文检索 · 零网络请求".into(),
+            (other, _) => format!("规则意图解析（未识别的模式 {other:?}，按规则处理）"),
+        }
+    }
+
     /// 按设置决定云端后端；不可用返回 None（调用方静默降级）
     fn cloud_backend(&self, settings: &AppSettings) -> Option<JevBackend> {
         let mode = settings.ai_backend_mode.as_str();

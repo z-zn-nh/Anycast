@@ -53,6 +53,21 @@ export global Settings {
     in-out property <bool> ai-lazy: true;
     in-out property <bool> ai-intent: true;
     in-out property <string> ai-model: "bge-small-zh · 未安装（接口就绪）";
+    // AI —— 判断模型后端（开发文档 Phase 2）
+    // `auto` = 逐级升级（规则 → 本地模型 → 云端，任一级成功即止）
+    in-out property <string> ai-backend: "auto";
+    in-out property <bool> ai-cloud-fallback: false;
+    // 连接状态文案 + 是否「已就绪」，后者驱动徽标配色
+    in-out property <string> ai-cloud-status: "";
+    in-out property <string> ai-cloud-badge: "";
+    in-out property <bool> ai-cloud-ok: false;
+    in-out property <string> ai-jev-endpoint: "";
+    in-out property <string> ai-jev-key: "";
+    in-out property <string> ai-jev-model: "";
+    in-out property <string> ai-jev-proxy: "";
+    // 「本地推理后端」那一行当前实际在用什么 —— 由 Rust 按模式拼好，
+    // 免得界面上写着「零网络请求」而用户其实刚开了云端。
+    in-out property <string> ai-backend-status: "";
 
     callback set-bool(string, bool);
     callback set-string(string, string);
@@ -522,8 +537,113 @@ export component SettingsModal inherits Rectangle {
                             title: "语义意图理解";
                             Row { label: "自然语言时间与类型解析"; desc: "智能识别「昨天」「上周」「代码」「文档」并自动转为结构化过滤";
                                 FluentSwitch { checked: Settings.ai-intent; toggled(v) => { Settings.set-bool("ai_intent_parsing", v); } } }
-                            Row { label: "本地推理后端"; desc: "当前：规则意图解析 + FTS5 正文检索 · 零网络请求"; divider: false;
+                            Row { label: "本地推理后端"; desc: Settings.ai-backend-status; divider: false;
                                 Badge { text: "● 就绪"; tint: #6ee7b7; } }
+                        }
+                        Group {
+                            title: "判断模型后端";
+                            Row { label: "后端模式"; desc: "规则解析离线、毫秒级；云端 Jev 理解力更强，但需联网且按次计费";
+                                PillSelect {
+                                    value: Settings.ai-backend;
+                                    label: Settings.ai-backend == "rule" ? "🔒 纯本地规则（零网络）"
+                                        : Settings.ai-backend == "jev" ? "☁️ 云端 Jev（强制）"
+                                        : "⚡ 自动逐级升级";
+                                    menu-width: 250px;
+                                    options: [
+                                        { value: "auto", label: "⚡ 自动逐级升级（规则 → 云端）" },
+                                        { value: "rule", label: "🔒 纯本地规则（零网络）" },
+                                        { value: "jev", label: "☁️ 云端 Jev（强制，跳过规则）" }
+                                    ];
+                                    changed(v) => { Settings.set-string("ai_backend_mode", v); }
+                                } }
+                            Row { label: "低置信时升级到云端"; desc: "仅「自动」模式生效：规则没把握时才联网，超时 800ms 静默放弃，首屏结果保留"; divider: false;
+                                FluentSwitch { checked: Settings.ai-cloud-fallback; toggled(v) => { Settings.set-bool("ai_cloud_fallback", v); } } }
+                        }
+                        Group {
+                            title: "云端连接（Jev）";
+                            Row { label: "连接状态"; desc: Settings.ai-cloud-status;
+                                Badge { text: Settings.ai-cloud-badge; tint: Settings.ai-cloud-ok ? #6ee7b7 : #fbbf24; } }
+                            // 这四个字段各自 `text <=> Settings.xxx` 双向绑定，
+                            // 另加一条 `edited` 显式回写 —— 不依赖绑定链，
+                            // 「保存」读到的就一定是输入框里的字。一行成本。
+                            //
+                            // 起因是排查「点保存却弹『已清空本地 Key』」：
+                            // 界面上明明有内容，属性却是空的。最终查明真凶是**中文输入法**
+                            // 改写了合成击键（见 tools/rt_probe.py::typetext），
+                            // 与 Slint 绑定无关；但显式回写便宜，留着。
+                            Rectangle {
+                                height: 76px;
+                                VerticalLayout {
+                                    padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
+                                    Text { text: "API 端点"; font-size: 12.5px; color: Theme.text-primary; }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        TextField {
+                                            text <=> Settings.ai-jev-endpoint;
+                                            edited(v) => { Settings.ai-jev-endpoint = v; }
+                                            placeholder: "https://api.typesafe.ai/v1/systemone";
+                                            mono: true;
+                                            horizontal-stretch: 1;
+                                        }
+                                        ActionButton { label: "保存"; clicked => { Settings.set-string("ai_jev_endpoint", Settings.ai-jev-endpoint); } }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                height: 76px;
+                                VerticalLayout {
+                                    padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
+                                    Text { text: "API Key（明文存于本地配置；环境变量 TYPESAFE_API_KEY / JEV_API_KEY 优先级更高）"; font-size: 12.5px; color: Theme.text-primary; }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        TextField {
+                                            text <=> Settings.ai-jev-key;
+                                            edited(v) => { Settings.ai-jev-key = v; }
+                                            placeholder: "ts_… 或 jv_live_…";
+                                            mono: true;
+                                            password: true;
+                                            horizontal-stretch: 1;
+                                        }
+                                        ActionButton { label: "保存"; clicked => { Settings.set-string("ai_jev_api_key", Settings.ai-jev-key); } }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                height: 76px;
+                                VerticalLayout {
+                                    padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
+                                    Text { text: "模型名"; font-size: 12.5px; color: Theme.text-primary; }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        TextField {
+                                            text <=> Settings.ai-jev-model;
+                                            edited(v) => { Settings.ai-jev-model = v; }
+                                            placeholder: "jev-latest";
+                                            mono: true;
+                                            horizontal-stretch: 1;
+                                        }
+                                        ActionButton { label: "保存"; clicked => { Settings.set-string("ai_jev_model", Settings.ai-jev-model); } }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                height: 76px;
+                                VerticalLayout {
+                                    padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
+                                    Text { text: "代理（留空 = 跟随系统代理）"; font-size: 12.5px; color: Theme.text-primary; }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        TextField {
+                                            text <=> Settings.ai-jev-proxy;
+                                            edited(v) => { Settings.ai-jev-proxy = v; }
+                                            placeholder: "http://127.0.0.1:7897";
+                                            mono: true;
+                                            horizontal-stretch: 1;
+                                        }
+                                        ActionButton { label: "保存"; clicked => { Settings.set-string("ai_jev_proxy", Settings.ai-jev-proxy); } }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

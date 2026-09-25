@@ -263,6 +263,9 @@ export component TextField inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder;
     in property <bool> mono: false;
+    /// 遮蔽显示（用于 API Key 这类不该被旁人看到的字段）。
+    /// 映射到 Slint `TextInput.input-type`，1.18 起支持。
+    in property <bool> password: false;
     callback edited(string);
     callback accepted();
     public function take-focus() { input.focus(); }
@@ -291,6 +294,9 @@ export component TextField inherits Rectangle {
         font-family: root.mono ? Theme.mono : Theme.font;
         color: Theme.text-primary;
         single-line: true;
+        // 必须写 `InputType.text` 这种限定名：裸写 `text` 会解析成 TextInput
+        // 自己的 `text` 属性（字符串），编译期报「Cannot convert string to bool」。
+        input-type: root.password ? InputType.password : InputType.text;
         vertical-alignment: center;
         selection-background-color: #3b82f680;
         edited => { root.edited(self.text); }
