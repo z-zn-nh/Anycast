@@ -222,4 +222,130 @@ mod tests {
         // 桥接与搜索模式无关，这里只是钉住 `SearchMode` 的默认值没变
         assert_eq!(SearchMode::default(), SearchMode::Fast);
     }
+
+    /// 「按范围浏览」兜底所依赖的机制：**空查询 + 范围过滤**能给出该范围内的
+    /// 最近条目。`AppCore::search_with_intent` 在关键词搜不到东西时会走这条路
+    /// （「我前几天弄的那个东西」的本地关键词是「前几天弄」，拿它检索永远是 0 条，
+    /// 筛选只能做减法 —— 必须丢掉关键词才可能有结果）。
+    #[test]
+    fn empty_query_browses_within_the_scope() {
+        use crate::core::search::{SearchEngine, SearchProvider};
+        use crate::core::storage::{FileRecord, Storage};
+        use crate::models::SearchRequest;
+        use std::sync::Arc;
+
+        let storage = Arc::new(Storage::open_in_memory().unwrap());
+        storage
+            .upsert_files(&[
+                FileRecord {
+                    path: "D:\\Src\\main.rs".into(),
+                    name: "main.rs".into(),
+                    ext: "rs".into(),
+                    mtime: 900,
+                    ..Default::default()
+                },
+                FileRecord {
+                    path: "D:\\Shots\\a.png".into(),
+                    name: "a.png".into(),
+                    ext: "png".into(),
+                    mtime: 800,
+                    ..Default::default()
+                },
+            ])
+            .unwrap();
+        let engine = SearchEngine::new(Arc::clone(&storage));
+
+        // 关键词搜不到 → 空结果（这就是兜底的触发条件）
+        let miss = engine.search(&SearchRequest {
+            query: "前几天弄".into(),
+            mode: SearchMode::Smart,
+            limit: 50,
+            ..Default::default()
+        });
+        assert!(miss.items.is_empty(), "垃圾关键词本来就该搜不到：{:?}", miss.items.len());
+
+        // 丢掉关键词、只留范围 → 该范围内的条目回来了
+        let scope = SearchScopeFilter { type_category: "code".into(), ..Default::default() };
+        let browse = engine.search(&SearchRequest {
+            query: String::new(),
+            mode: SearchMode::Smart,
+            scope,
+            limit: 50,
+            ..Default::default()
+        });
+        let names: Vec<&str> = browse.items.iter().map(|i| i.title.as_str()).collect();
+        assert!(names.iter().any(|n| n == &"main.rs"), "浏览应当给出代码文件：{names:?}");
+        assert!(!names.iter().any(|n| n.ends_with(".png")), "范围仍然生效：{names:?}");
+    }
+
+    /// **闸门 2 / 3 的真实数据路径**：云端返回的答案 → `Intent` → 检索范围 → 实际结果变少。
+    ///
+    /// 这里刻意不连网络：`parse_answers` 吃的是字面 JSON（形状取自官方 §2.1.1），
+    /// 传输层另有 `jev::tests::http_roundtrip_against_a_stub_server` 覆盖。
+    /// 本用例要钉的是**最后一公里** —— 槽位解析得再对，
+    /// 没落到 `SearchScopeFilter` 上就等于没做。
+    #[test]
+    fn upgraded_intent_actually_narrows_a_real_search() {
+        use crate::core::decision::jev;
+        use crate::core::search::{SearchEngine, SearchProvider};
+        use crate::core::storage::{FileRecord, Storage};
+        use crate::models::SearchRequest;
+        use std::sync::Arc;
+
+        let storage = Arc::new(Storage::open_in_memory().unwrap());
+        storage
+            .upsert_files(&[
+                FileRecord {
+                    path: "D:\\Infra\\docker-compose.yml".into(),
+                    name: "docker-compose.yml".into(),
+                    ext: "yml".into(),
+                    mtime: 100,
+                    ..Default::default()
+                },
+                FileRecord {
+                    path: "D:\\Shots\\docker.png".into(),
+                    name: "docker.png".into(),
+                    ext: "png".into(),
+                    mtime: 100,
+                    ..Default::default()
+                },
+            ])
+            .unwrap();
+        let engine = SearchEngine::new(Arc::clone(&storage));
+
+        let req = SearchRequest {
+            query: "docker".into(),
+            mode: SearchMode::Smart,
+            limit: 50,
+            ..Default::default()
+        };
+
+        // ── 首屏（闸门 1）：规则解析不出类型，两条都给 ──
+        let before = engine.search(&req);
+        let names: Vec<&str> = before.items.iter().map(|i| i.title.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("docker-compose")), "首屏应当有 yml：{names:?}");
+        assert!(names.iter().any(|n| n.ends_with(".png")), "首屏应当有 png：{names:?}");
+
+        // ── 闸门 2 / 3：云端回了一个类型槽位（形状照官方 §2.1.1）──
+        let answers = jev::parse_answers(
+            r#"{"answers":{"type":{"type":"choice","choice":"code","confidence":0.93}}}"#,
+        )
+        .unwrap();
+        let intent = Intent::from_answers(&answers, "jev");
+        assert_eq!(intent.type_slot, TypeSlot::Code);
+
+        // ── 落到范围，再检索一次 ──
+        let mut scope = SearchScopeFilter::default();
+        let chips = apply(&intent, &mut scope);
+        assert_eq!(scope.type_category, "code");
+        assert!(chips.iter().any(|c| c.key == "类型"), "得让用户看见模型加了什么条件");
+
+        let after = engine.search(&SearchRequest { scope, ..req.clone() });
+        let names: Vec<&str> = after.items.iter().map(|i| i.title.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("docker-compose")), "yml 必须还在：{names:?}");
+        assert!(
+            !names.iter().any(|n| n.ends_with(".png")),
+            "png 必须被筛掉 —— 否则槽位等于没落地：{names:?}"
+        );
+    }
 }

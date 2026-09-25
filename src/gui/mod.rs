@@ -12,6 +12,7 @@ use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel, Weak};
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -22,6 +23,12 @@ use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 const HEADER_H: f32 = 26.0;
 const ROW_H: f32 = 42.0;
 const CELL_H: f32 = 92.0;
+
+/// 发起闸门 2 / 3 之前等多久，用来判断用户是不是还在打字。
+///
+/// 比正常打字间隔（约 150~250 ms）长一点，比人的「说完一句」停顿短得多。
+/// 云端本身 p50 ≈ 900 ms，这点等待用户感知不到。
+const UPGRADE_SETTLE_MS: u64 = 400;
 
 struct UiState {
     results: Vec<SearchItemModel>,
@@ -53,7 +60,12 @@ pub struct Gui {
     tray: TrayIcon,
     core: Arc<AppCore>,
     state: RefCell<UiState>,
-    query_gen: AtomicU64,
+    /// 查询代数。每次 `refresh_search` 自增，用来丢弃过期的异步结果。
+    ///
+    /// 是 `Arc<AtomicU64>` 而不是普通字段：升级线程需要**在发请求前**
+    /// 读一眼当前代数，好判断「用户是不是还在打字」——
+    /// 否则每敲一个字都会发一次云端调用（要花钱的）。
+    query_gen: Arc<AtomicU64>,
     toast_timer: slint::Timer,
     poll_timer: slint::Timer,
 }
@@ -72,6 +84,33 @@ fn with_gui(f: impl FnOnce(&Rc<Gui>)) {
 
 fn ss(s: &str) -> SharedString {
     SharedString::from(s)
+}
+
+/// 增量补充的纯计算部分 —— 从「已展示的 id」与「升级后重新检索的完整列表」里，
+/// 算出该插入哪些新条目、以及选中项的新下标。
+///
+/// 抽成纯函数是为了能单测：这里的 off-by-one（位移量到底是「新条目数」
+/// 还是「新条目数 + 1」）是这条路径上最容易错的地方，而它错了以后
+/// 表现得像「键盘上下键不太灵」，极难在真机上定位。
+///
+/// ⚠️ 位移量是**新条目数**，不是「新条目数 + 1」：
+/// `selected` 是 `st.results` 的下标，而分组标题只存在于行模型里、不进 `results`。
+/// 多算一行就会选到原本选中项的下一条。
+///
+/// 返回 `None` 表示没有新条目（此时调用方应当**什么都不做**）。
+fn plan_merge(
+    shown_ids: &HashSet<String>,
+    selected: usize,
+    extra: Vec<SearchItemModel>,
+) -> Option<(Vec<SearchItemModel>, usize)> {
+    let fresh: Vec<SearchItemModel> = extra.into_iter().filter(|i| !shown_ids.contains(&i.id)).collect();
+    if fresh.is_empty() {
+        return None;
+    }
+    // 用户已经用方向键选过了就保住他那一条；
+    // 还停在第一条（没动过）就留在新的第一条上 —— 让他直接看到模型找到的东西。
+    let selected = if selected > 0 { selected + fresh.len() } else { 0 };
+    Some((fresh, selected))
 }
 
 fn to_ui_item(item: &SearchItemModel) -> ResultItem {
@@ -147,7 +186,7 @@ pub fn run(silent: bool) -> anyhow::Result<()> {
             taskbar_fixed: false,
             last_elapsed_ms: 0,
         }),
-        query_gen: AtomicU64::new(0),
+        query_gen: Arc::new(AtomicU64::new(0)),
         toast_timer: slint::Timer::default(),
         poll_timer: slint::Timer::default(),
     });
@@ -395,13 +434,50 @@ impl Gui {
         let req = self.build_request();
         let gen = self.query_gen.fetch_add(1, Ordering::SeqCst) + 1;
         let core = Arc::clone(&self.core);
+        let gen_counter = Arc::clone(&self.query_gen);
         let weak = self.ui.as_weak();
+        let weak2 = self.ui.as_weak();
         std::thread::spawn(move || {
-            let resp = core.search(&req);
+            // ── 首屏：闸门 1（同步、< 1ms）+ 检索，**绝不等待模型** ──
+            let (resp, worth_upgrade) = core.search_gated(&req);
+            let elapsed = resp.elapsed_ms;
+            let chips = resp.intent_chips;
             let _ = weak.upgrade_in_event_loop(move |_| {
                 with_gui(|g| {
                     if g.query_gen.load(Ordering::SeqCst) == gen {
-                        g.apply_results(resp.items, resp.elapsed_ms, resp.intent_chips);
+                        g.apply_results(resp.items, elapsed, chips);
+                    }
+                });
+            });
+
+            // ── 闸门 2 / 3 ──
+            // 纯关键词输入到此为止（§5.7 硬性规则 3：永不触发）。
+            if !worth_upgrade {
+                return;
+            }
+            // **防抖**：等用户把话说完再问模型。
+            //
+            // 不做这一步的话，智能模式下**每敲一个字都会发一次云端调用** ——
+            // 实测确认过：打字途中会有多个请求在途。Jev 单次 p50 ≈ 900 ms
+            // 且按次计费，敲 20 个字符就是 20 次调用。
+            // 首屏可以逐字符刷新（本地、免费），升级不行。
+            std::thread::sleep(Duration::from_millis(UPGRADE_SETTLE_MS));
+            // 睡醒后已经有更新的查询 → 这次不问了，让最后那个线程去问
+            if gen_counter.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            // 无可用后端 / 超时 / 失败一律返回 None —— 静默降级，
+            // 首屏那份结果照常留着，用户不会看到任何错误提示。
+            let Some(intent) = core.upgrade_intent(&req.query) else {
+                return;
+            };
+            let resp2 = core.search_with_intent(&req, &intent);
+            let elapsed2 = resp2.elapsed_ms;
+            let _ = weak2.upgrade_in_event_loop(move |_| {
+                with_gui(|g| {
+                    // 查询已经变了就丢掉这次升级结果（同一把代数锁）
+                    if g.query_gen.load(Ordering::SeqCst) == gen {
+                        g.merge_upgraded(resp2.items, elapsed2, resp2.intent_chips);
                     }
                 });
             });
@@ -409,6 +485,48 @@ impl Gui {
     }
 
     fn apply_results(self: &Rc<Self>, items: Vec<SearchItemModel>, elapsed: u32, chips: Vec<IntentChipModel>) {
+        self.render_rows(items, elapsed, chips, 0, true);
+    }
+
+    /// **增量替换**：把升级后新出现的条目插到列表最前面，**不清空已有列表**。
+    ///
+    /// §5.7 硬性规则 1。清空再填会让用户看到一次闪烁；更糟的是升级失败或超时时，
+    /// 他刚看到的结果会凭空消失 —— 那比不升级还差。
+    ///
+    /// 新条目单独归到「深度匹配」分组：用户得能看出这几条是模型解析之后才找到的，
+    /// 而不是以为自己第一次就搜出了这些。
+    fn merge_upgraded(self: &Rc<Self>, extra: Vec<SearchItemModel>, elapsed: u32, chips: Vec<IntentChipModel>) {
+        let (items, selected) = {
+            let mut st = self.state.borrow_mut();
+            let shown: HashSet<String> = st.results.iter().map(|i| i.id.clone()).collect();
+            let Some((mut fresh, selected)) = plan_merge(&shown, st.selected, extra) else {
+                // 模型没带来任何新东西 —— 连芯片都不动，
+                // 别让界面「抖一下」却什么都没变。
+                return;
+            };
+            for it in &mut fresh {
+                it.section = "深度匹配".into();
+            }
+            let mut items = fresh;
+            items.append(&mut st.results);
+            (items, selected)
+        };
+        self.render_rows(items, elapsed, chips, selected, false);
+    }
+
+    /// 重建行模型并刷新视图。
+    ///
+    /// `fresh = true`：全新一次搜索 —— 选中归零、置顶面板取消、列表滚回顶部。
+    /// `fresh = false`：增量补充 —— 保住用户当前的位置，**不滚动**
+    /// （否则他正在看的那一行会被顶走）。
+    fn render_rows(
+        self: &Rc<Self>,
+        items: Vec<SearchItemModel>,
+        elapsed: u32,
+        chips: Vec<IntentChipModel>,
+        selected: usize,
+        fresh: bool,
+    ) {
         let mut rows: Vec<ResultRow> = Vec::with_capacity(items.len() + 4);
         let mut sections: Vec<GridSection> = Vec::new();
         let mut last_section = String::new();
@@ -424,12 +542,15 @@ impl Gui {
             rows.push(ResultRow { is_header: false, header: ss(""), index: i as i32, item: to_ui_item(it) });
         }
         let ui_items: Vec<ResultItem> = items.iter().map(to_ui_item).collect();
+        let selected = selected.min(items.len().saturating_sub(1));
         {
             let mut st = self.state.borrow_mut();
             st.results = items;
-            st.selected = 0;
-            st.pinned_selected = None;
+            st.selected = selected;
             st.last_elapsed_ms = elapsed;
+            if fresh {
+                st.pinned_selected = None;
+            }
         }
         self.ui.set_rows(ModelRc::new(VecModel::from(rows)));
         self.ui.set_items(ModelRc::new(VecModel::from(ui_items)));
@@ -437,10 +558,14 @@ impl Gui {
         self.ui.set_chips(ModelRc::new(VecModel::from(
             chips.into_iter().map(|c| IntentChip { key: ss(&c.key), val: ss(&c.val) }).collect::<Vec<_>>(),
         )));
-        self.ui.set_selected(0);
-        self.ui.set_pinned_selected(-1);
+        self.ui.set_selected(selected as i32);
+        if fresh {
+            self.ui.set_pinned_selected(-1);
+        }
         self.update_selection_geometry();
-        self.ui.invoke_scroll_top();
+        if fresh {
+            self.ui.invoke_scroll_top();
+        }
         self.update_status();
     }
 
@@ -1706,3 +1831,99 @@ impl Gui {
 }
 
 type IntentChipModel = crate::models::IntentChip;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(id: &str) -> SearchItemModel {
+        SearchItemModel { id: id.into(), title: id.into(), ..Default::default() }
+    }
+
+    fn shown(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn ids(items: &[SearchItemModel]) -> Vec<&str> {
+        items.iter().map(|i| i.id.as_str()).collect()
+    }
+
+    /// 首屏已有的条目不能被重复插入 —— 否则列表里会出现两行一模一样的结果。
+    #[test]
+    fn already_shown_items_are_dropped() {
+        let extra = vec![item("a"), item("b"), item("c")];
+        let (fresh, _) = plan_merge(&shown(&["a", "c"]), 0, extra).expect("b 是新条目");
+        assert_eq!(ids(&fresh), vec!["b"]);
+    }
+
+    /// 没有任何新条目时必须返回 `None`，调用方据此**什么都不做**。
+    /// 若返回空 Vec 而不是 None，调用方就会白刷一次界面（可见的抖动）。
+    #[test]
+    fn no_new_items_means_do_nothing() {
+        let extra = vec![item("a"), item("b")];
+        assert!(plan_merge(&shown(&["a", "b"]), 0, extra).is_none());
+    }
+
+    /// 用户没动过选中（还停在第一条）时，选中留在**新的**第一条上 ——
+    /// 他刚敲完字，应该直接看到模型补出来的东西。
+    #[test]
+    fn untouched_selection_follows_the_new_first_row() {
+        let extra = vec![item("x"), item("y"), item("a")];
+        let (fresh, selected) = plan_merge(&shown(&["a"]), 0, extra).unwrap();
+        assert_eq!(ids(&fresh), vec!["x", "y"]);
+        assert_eq!(selected, 0, "没动过选中就不该往下移");
+    }
+
+    /// 用户已经用方向键选过了，就必须保住他选的那一条。
+    ///
+    /// 这是 off-by-one 的哨兵：位移量只能是**新条目数**（2），
+    /// 写成「新条目数 + 1」（3）会让他选中的变成原来那条的下一条。
+    #[test]
+    fn navigated_selection_stays_on_the_same_item() {
+        // 首屏 5 条：a b c d e，用户选了下标 3（d）
+        let first_screen = ["a", "b", "c", "d", "e"];
+        let extra = vec![item("x"), item("y"), item("a"), item("b"), item("c"), item("d"), item("e")];
+        let (fresh, selected) = plan_merge(&shown(&first_screen), 3, extra).unwrap();
+        assert_eq!(ids(&fresh), vec!["x", "y"]);
+
+        // 合并后列表是 [x, y, a, b, c, d, e]，原下标 3 的 d 现在在 5
+        let merged: Vec<String> = fresh
+            .iter()
+            .map(|i| i.id.clone())
+            .chain(first_screen.iter().map(|s| (*s).to_string()))
+            .collect();
+        assert_eq!(selected, 5);
+        assert_eq!(merged[selected], "d", "选中的必须还是 d");
+    }
+
+    /// 新条目插在最前面，原列表一条不少 —— §5.7 硬性规则 1 不得清空。
+    #[test]
+    fn existing_items_are_never_dropped() {
+        let first_screen = ["a", "b"];
+        let extra = vec![item("x"), item("a"), item("b")];
+        let (fresh, _) = plan_merge(&shown(&first_screen), 1, extra).unwrap();
+        assert_eq!(ids(&fresh), vec!["x"]);
+        let merged: Vec<String> = fresh
+            .iter()
+            .map(|i| i.id.clone())
+            .chain(first_screen.iter().map(|s| (*s).to_string()))
+            .collect();
+        assert_eq!(merged, vec!["x", "a", "b"], "首屏两条必须原样保留");
+    }
+
+    /// 空列表（首屏什么都没搜到）时，升级结果全部算新条目。
+    #[test]
+    fn empty_first_screen_takes_everything() {
+        let extra = vec![item("x"), item("y")];
+        let (fresh, selected) = plan_merge(&shown(&[]), 0, extra).unwrap();
+        assert_eq!(ids(&fresh), vec!["x", "y"]);
+        assert_eq!(selected, 0);
+    }
+
+    /// 升级结果为空（模型把范围收得太窄，一条都没匹配上）：
+    /// 不得改动已渲染的列表。
+    #[test]
+    fn empty_upgrade_leaves_the_list_alone() {
+        assert!(plan_merge(&shown(&["a", "b"]), 0, Vec::new()).is_none());
+    }
+}

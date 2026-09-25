@@ -19,7 +19,7 @@
 use super::jev::JevBackend;
 use super::rule::RuleBackend;
 use super::telemetry::{Gate, Telemetry};
-use super::{classify_input, slots, DecisionBackend, InputShape, Intent};
+use super::{classify_input, DecisionBackend, InputShape, Intent};
 use crate::core::settings::AppSettings;
 use crate::core::storage::Storage;
 use anyhow::Result;
@@ -89,9 +89,7 @@ impl DecisionHub {
         }
 
         let intent = self.rule_intent(query);
-        let slot_hit = intent.type_slot != slots::TypeSlot::All
-            || intent.time_slot != slots::TimeSlot::Any
-            || intent.location_slot != slots::LocationSlot::Any;
+        let slot_hit = intent.has_slot();
 
         let worth_upgrade = shape.worth_model();
         // 埋点里的 gate 表示「如果没有更高级后端可用，这次会停在哪」

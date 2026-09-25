@@ -179,48 +179,78 @@ impl AppCore {
     // ------------------------------------------------------------------
     // 搜索
     // ------------------------------------------------------------------
+    /// 检索 + 闸门 1。
+    ///
+    /// 保持旧签名（`recent_items` 等调用方不需要闸门信息）。
+    /// 需要「要不要继续升级」的调用方请用 [`search_gated`](Self::search_gated)。
     pub fn search(&self, req: &SearchRequest) -> SearchResponse {
-        // 闸门 1 是同步的（< 1 ms），且搜索本身已经跑在后台线程上
-        // （见 `gui::refresh_search`），所以这里直接调用不阻塞 UI。
-        //
-        // 只对**智能模式**做桥接：快速模式是「敲什么搜什么」的原始通道，
-        // 不该被自动加筛选条件。
-        if req.mode != SearchMode::Smart {
-            return self.engine.search(req);
-        }
-        let mut req = req.clone();
-        let chips = self.apply_decision_slots(&mut req);
-        let mut resp = self.engine.search(&req);
-
-        if !chips.is_empty() {
-            // 桥接层给出的维度以它为准：`search::parse_intent` 是独立跑的，
-            // 不看 scope，所以它仍会为同一些维度产出芯片。
-            // 不剔掉就会同时显示「类型：图片与媒体」和「类型：图片」——
-            // 两条互相矛盾的提示，比没有提示更糟。
-            let owned: Vec<&str> = chips.iter().map(|c| c.key.as_str()).collect();
-            resp.intent_chips.retain(|c| !owned.contains(&c.key.as_str()));
-            resp.intent_chips.splice(0..0, chips);
-        }
-        resp
+        self.search_gated(req).0
     }
 
-    /// 把判断模型的槽位落到 `req.scope` 上，返回它认领的芯片。
+    /// 检索 + 闸门 1，并把**是否值得升级**一并交回调用方。
     ///
-    /// 这是「判断模型」在生产链路上的**唯一**入口 ——
-    /// 埋点也在这里顺带记上（`analyze` 内部记录），
-    /// 所以语言分布统计从这一刻起才真的开始积累。
-    fn apply_decision_slots(&self, req: &mut SearchRequest) -> Vec<IntentChip> {
-        if req.query.trim().is_empty() {
-            return Vec::new();
+    /// 返回的 `bool` 就是 `Analysis::worth_upgrade`：**纯关键词输入恒为 `false`**
+    /// （§5.7 硬性规则 3）。调用方据此决定要不要再开一条后台线程去问闸门 2 / 3 ——
+    /// 也就是说，这个布尔值是「该不该花钱调模型」的唯一开关。
+    pub fn search_gated(&self, req: &SearchRequest) -> (SearchResponse, bool) {
+        // 只对**智能模式**做桥接：快速模式是「敲什么搜什么」的原始通道，
+        // 不该被自动加筛选条件。
+        if req.mode != SearchMode::Smart || req.query.trim().is_empty() {
+            return (self.engine.search(req), false);
         }
+        // 闸门 1 是同步的（< 1 ms），且搜索本身已经跑在后台线程上
+        // （见 `gui::refresh_search`），所以这里直接调用不阻塞 UI。
+        // 埋点也在这一步记上 —— 全项目只有这里记一次，别在别处再调 `analyze`。
         let s = self.settings.read().clone();
         let analysis = self.decision.analyze(&req.query, &s);
+        let resp = self.search_with_intent(req, &analysis.intent);
+        (resp, analysis.worth_upgrade)
+    }
+
+    /// **闸门 2 / 3 已经拿到结论之后**再检索一次。
+    ///
+    /// 与 [`search_gated`](Self::search_gated) 的区别：不重跑闸门 1、
+    /// **不再记一次埋点** —— 否则一次查询会被记两遍，语言分布统计直接失真。
+    pub fn search_with_intent(&self, req: &SearchRequest, intent: &decision::Intent) -> SearchResponse {
+        let mut req = req.clone();
         // 模型明确说「这不是在找东西」（闲聊 / 生成任务）时，别加筛选条件 ——
         // 那类输入本来就会回落到常规检索，硬筛只会把结果清空。
-        if !analysis.intent.is_search {
-            return Vec::new();
+        let chips = if intent.is_search {
+            decision::bridge::apply(intent, &mut req.scope)
+        } else {
+            Vec::new()
+        };
+        let mut resp = self.engine.search(&req);
+
+        // ── 按范围浏览（browse）兜底 ──────────────────────────────────
+        //
+        // 这是「我前几天弄的那个东西」这类查询的**唯一出路**。
+        // 那句话的本地关键词是「前几天弄」—— 拿它去检索永远是 0 条，
+        // 再加多少筛选条件也还是 0 条：筛选只能做减法。
+        // 而模型真正听懂的是「最近一周的代码文件」。
+        //
+        // 所以：**关键词搜不到东西、但模型给了筛选条件**时，丢掉关键词重搜一次，
+        // 只留范围 + 时间倒序（`search` 对空查询本来就是「按最近使用浏览」）。
+        //
+        // 只在**升级路径**上做，且只在**一条都没有**时做：
+        // 首屏绝不走这条路（首屏必须快且必须由关键词驱动），
+        // 已经有结果时也不动（那说明关键词是有效的，筛选只是让它更准）。
+        if resp.items.is_empty() && intent.is_search && intent.has_slot() {
+            let mut browse = req.clone();
+            browse.query = String::new();
+            let alt = self.engine.search(&browse);
+            if !alt.items.is_empty() {
+                log::debug!(
+                    "关键词「{}」无结果，改用按范围浏览（{}）",
+                    req.query,
+                    intent.type_slot.label_cn()
+                );
+                resp = alt;
+            }
         }
-        decision::bridge::apply(&analysis.intent, &mut req.scope)
+
+        merge_chips(&mut resp, chips);
+        resp
     }
 
     pub fn recent_items(&self) -> Vec<SearchItemModel> {
@@ -700,5 +730,82 @@ impl AppCore {
 impl Drop for AppCore {
     fn drop(&mut self) {
         self.bus.quit();
+    }
+}
+
+/// 把桥接层认领的维度插到芯片列表最前面，并剔掉为同一维度产出的旧芯片。
+///
+/// `search::parse_intent` 是独立跑的、**不看 scope**，所以它仍会为同一些维度
+/// 产出芯片。不剔掉就会同时显示「类型：图片与媒体」和「类型：图片」——
+/// 两条互相矛盾的提示，比没有提示更糟。
+fn merge_chips(resp: &mut SearchResponse, chips: Vec<IntentChip>) {
+    if chips.is_empty() {
+        return;
+    }
+    let owned: Vec<&str> = chips.iter().map(|c| c.key.as_str()).collect();
+    resp.intent_chips.retain(|c| !owned.contains(&c.key.as_str()));
+    resp.intent_chips.splice(0..0, chips);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chip(key: &str, val: &str) -> IntentChip {
+        IntentChip { key: key.into(), val: val.into() }
+    }
+
+    fn keys(resp: &SearchResponse) -> Vec<&str> {
+        resp.intent_chips.iter().map(|c| c.key.as_str()).collect()
+    }
+
+    /// 桥接层没认领任何维度时，`search::parse_intent` 产出的芯片原样保留。
+    #[test]
+    fn empty_bridge_leaves_chips_untouched() {
+        let mut resp = SearchResponse {
+            intent_chips: vec![chip("关键词", "docker"), chip("类型", "代码")],
+            ..Default::default()
+        };
+        merge_chips(&mut resp, Vec::new());
+        assert_eq!(keys(&resp), vec!["关键词", "类型"]);
+    }
+
+    /// 桥接认领的维度必须**顶掉** `parse_intent` 为同一维度产出的旧芯片。
+    ///
+    /// `parse_intent` 是独立跑的、不看 scope，所以它一定会重复产出。
+    /// 不剔掉就会同时显示「类型：代码」和「类型：代码 · 脚本」两条。
+    #[test]
+    fn bridge_chip_replaces_the_legacy_one_for_the_same_dimension() {
+        let mut resp = SearchResponse {
+            intent_chips: vec![chip("关键词", "docker"), chip("类型", "代码 · 脚本"), chip("修改", "昨天")],
+            ..Default::default()
+        };
+        merge_chips(&mut resp, vec![chip("类型", "代码")]);
+        assert_eq!(keys(&resp), vec!["类型", "关键词", "修改"], "同键的旧芯片被顶掉，且新芯片在最前");
+        assert_eq!(resp.intent_chips[0].val, "代码");
+    }
+
+    /// 三个维度同时认领时，顺序稳定、互不影响。
+    #[test]
+    fn all_three_dimensions_are_claimed_at_once() {
+        let mut resp = SearchResponse {
+            intent_chips: vec![chip("关键词", "配置"), chip("类型", "旧"), chip("修改", "旧"), chip("位置", "旧")],
+            ..Default::default()
+        };
+        merge_chips(
+            &mut resp,
+            vec![chip("类型", "代码"), chip("修改", "昨天"), chip("位置", "指定盘符")],
+        );
+        assert_eq!(keys(&resp), vec!["类型", "修改", "位置", "关键词"]);
+    }
+
+    /// 反复合并不得累积重复芯片 —— 升级路径会再走一次 `search_with_intent`。
+    #[test]
+    fn merging_twice_does_not_duplicate() {
+        let mut resp = SearchResponse { intent_chips: vec![chip("类型", "旧")], ..Default::default() };
+        merge_chips(&mut resp, vec![chip("类型", "代码")]);
+        merge_chips(&mut resp, vec![chip("类型", "代码")]);
+        assert_eq!(keys(&resp), vec!["类型"]);
+        assert_eq!(resp.intent_chips.len(), 1);
     }
 }

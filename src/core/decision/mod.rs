@@ -182,6 +182,17 @@ pub struct Intent {
 }
 
 impl Intent {
+    /// 是否解析出了**至少一个**有效槽位。
+    ///
+    /// 这是「要不要花钱调云端」的实际判据 —— 规则已经认出来了就别再问模型。
+    /// 也是「模型这次到底说了什么」的判据：全 `all` / `any` 等于什么都没说，
+    /// 此时不该拿它去改检索范围。
+    pub fn has_slot(&self) -> bool {
+        self.type_slot != TypeSlot::All
+            || self.time_slot != TimeSlot::Any
+            || self.location_slot != LocationSlot::Any
+    }
+
     /// 从任意后端返回的 `Answers` 组装结论。
     ///
     /// 缺失的槽位一律回落到最宽松的取值（`all` / `any`），

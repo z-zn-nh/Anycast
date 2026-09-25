@@ -121,6 +121,70 @@ def _key(vk, up=False):
     user32.keybd_event(vk, 0, KEYEVENTF_KEYUP if up else 0, 0)
 
 
+# --- SendInput + KEYEVENTF_UNICODE：唯一能把**中文**送进窗口的办法 ---
+#
+# `keybd_event` / `VkKeyScanW` 走的是「物理按键 → 键盘布局 → 字符」这条路，
+# 而中文没有对应的物理键：`VkKeyScanW(ord('我'))` 返回 -1，
+# 原来的实现 `& 0xFF` 会把它变成 0xFF（一个不存在的 VK），**静默什么都不输入**。
+# 表现为「探针跑完没报错，但搜索框还是空的」，极容易误判成应用的问题。
+#
+# KEYEVENTF_UNICODE 直接送 UTF-16 码元，绕过键盘布局。
+KEYEVENTF_UNICODE = 0x0004
+INPUT_KEYBOARD = 1
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wt.WORD),
+        ("wScan", wt.WORD),
+        ("dwFlags", wt.DWORD),
+        ("time", wt.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wt.LONG),
+        ("dy", wt.LONG),
+        ("mouseData", wt.DWORD),
+        ("dwFlags", wt.DWORD),
+        ("time", wt.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [("uMsg", wt.DWORD), ("wParamL", wt.WORD), ("wParamH", wt.WORD)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [("ki", _KEYBDINPUT), ("mi", _MOUSEINPUT), ("hi", _HARDWAREINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [("type", wt.DWORD), ("u", _INPUTUNION)]
+
+
+def _send_unicode_unit(unit, up=False):
+    flags = KEYEVENTF_UNICODE | (KEYEVENTF_KEYUP if up else 0)
+    inp = _INPUT(type=INPUT_KEYBOARD)
+    inp.u.ki = _KEYBDINPUT(0, unit, flags, 0, None)
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+
+
+def _type_unicode(s):
+    """按 UTF-16 码元逐个送；BMP 之外的字符要拆成代理对。"""
+    for ch in s:
+        code = ord(ch)
+        units = [code] if code <= 0xFFFF else [0xD800 + ((code - 0x10000) >> 10), 0xDC00 + ((code - 0x10000) & 0x3FF)]
+        for u in units:
+            _send_unicode_unit(u)
+            time.sleep(0.012)
+            _send_unicode_unit(u, up=True)
+            time.sleep(0.012)
+
+
 def click(lx, ly, double=False):
     hwnd = find_window()
     force_foreground(hwnd)
@@ -168,6 +232,11 @@ def keys(combo):
 
 def typetext(s):
     force_foreground(find_window())
+    # 含非 ASCII 字符就整串走 Unicode 通道 —— 中文没有物理键，
+    # `VkKeyScanW` 映射不出来（见上面 `_type_unicode` 的注释）。
+    if any(ord(c) > 0x7F for c in s):
+        _type_unicode(s)
+        return
     for ch in s:
         vk = VK.get(ch)
         if vk is None and len(ch) == 1:

@@ -346,6 +346,18 @@ mod tests {
         assert_eq!(i.location_scope, None);
     }
 
+    /// `has_slot()` 是「模型这次到底说了什么」的判据 ——
+    /// 全 `all` / `any` 等于什么都没说，此时不该拿它去改检索范围，
+    /// 也不该触发「按范围浏览」兜底（否则纯关键词查询会突然变成浏览全部）。
+    #[test]
+    fn has_slot_tells_apart_nothing_from_something() {
+        assert!(!intent("docker").has_slot(), "纯关键词不该算解析出槽位");
+        assert!(!intent("随便来点东西").has_slot());
+        assert!(intent("找一下昨天改的 docker 配置").has_slot());
+        assert!(intent("D盘那个配置").has_slot(), "只有位置槽位也算");
+        assert!(intent("找点截图").has_slot(), "只有类型槽位也算");
+    }
+
     #[test]
     fn non_search_inputs_are_rejected() {
         assert!(!intent("今天天气怎么样").is_search);

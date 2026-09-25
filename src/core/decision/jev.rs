@@ -501,4 +501,107 @@ mod tests {
         assert_eq!(JevBackend::env_name_for(OFFICIAL_ENDPOINT), ENV_OFFICIAL);
         assert_eq!(JevBackend::env_name_for(HOSTED_ENDPOINT), ENV_HOSTED);
     }
+
+    /// **桩服务端到端**：验证真正发出去的字节，而不只是 `build_body` 的返回值。
+    ///
+    /// 这条路径此前只有 `build_body` / `parse_answers` 的单元测试 ——
+    /// 传输层本身（WinHTTP 的请求行、头、读体）**一次都没跑过**，
+    /// 而 `WinHttpSendRequest` 的 headers 长度语义就踩过一次坑
+    /// （多带一个 `\0` → `E_INVALIDARG` 0x80070057）。
+    /// 那段代码只有真发一次请求才能覆盖。
+    ///
+    /// 用桩服务而不是真实端点：不烧钱、不需要 Key、不依赖网络。
+    /// 本机若把 Clash 设成了系统代理，WinHTTP 默认会绕过 `<local>`，
+    /// 所以 `127.0.0.1` 不受影响；万一这里开始失败，先查代理的绕过列表。
+    #[test]
+    fn http_roundtrip_against_a_stub_server() {
+        use crate::core::decision::{Intent, TypeSlot};
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("绑定本地端口");
+        let port = listener.local_addr().unwrap().port();
+
+        // 响应体形状与官方一致（§2.1.1）：answers 里每项带 type
+        let payload = r#"{"answers":{"type":{"type":"choice","choice":"code","confidence":0.91},"is_search":{"type":"noul","noul":0.93}}}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            payload.len(),
+            payload
+        );
+
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("应当收到一次请求");
+            let mut reader = BufReader::new(sock.try_clone().expect("复制句柄"));
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    break;
+                }
+                let end_of_head = line == "\r\n" || line == "\n";
+                head.push_str(&line);
+                if end_of_head {
+                    break;
+                }
+            }
+            let len: usize = head
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    if k.eq_ignore_ascii_case("content-length") {
+                        v.trim().parse().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            let mut body = vec![0u8; len];
+            let _ = reader.read_exact(&mut body);
+            let _ = sock.write_all(response.as_bytes());
+            let _ = sock.flush();
+            (head, String::from_utf8_lossy(&body).to_string())
+        });
+
+        let backend = JevBackend::new(
+            format!("http://127.0.0.1:{port}/v1/systemone"),
+            "test-key",
+            "jev-latest",
+        )
+        .with_timeout(5_000);
+        let answers = backend
+            .decide("找一下 docker 配置", &standard_questions())
+            .expect("桩服务应当返回可解析的响应");
+
+        let (head, sent) = server.join().expect("桩线程不应 panic");
+
+        // ── 请求侧：这几条以前没有任何测试覆盖 ──
+        assert!(
+            head.starts_with("POST /v1/systemone "),
+            "请求行不对（路径或方法错了）：{head}"
+        );
+        assert!(
+            head.to_lowercase().contains("authorization: bearer test-key"),
+            "缺 Authorization 头：{head}"
+        );
+        assert!(
+            head.to_lowercase().contains("content-type: application/json"),
+            "缺 Content-Type 头：{head}"
+        );
+
+        let sent_json: serde_json::Value = serde_json::from_str(&sent).expect("请求体应当是合法 JSON");
+        assert_eq!(sent_json["state"], "找一下 docker 配置");
+        assert_eq!(sent_json["model"], "jev-latest");
+        assert!(
+            sent_json["questions"]["type"]["criteria"].is_object(),
+            "choice 的 criteria 必须是**映射**（§2.1.1：score 是有序数组、noul 不传）"
+        );
+        assert_eq!(sent_json["questions"]["type"]["type"], "choice");
+
+        // ── 响应侧：解析回来的答案要能组装成 Intent ──
+        let it = Intent::from_answers(&answers, backend.id());
+        assert_eq!(it.type_slot, TypeSlot::Code);
+        assert!(it.is_search);
+        assert_eq!(it.backend, "jev");
+    }
 }
