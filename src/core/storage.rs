@@ -11,11 +11,17 @@ use crate::models::SearchScopeFilter;
 pub struct FileRecord {
     pub id: i64,
     pub path: String,
+    /// 直接父目录。冗余存储并建索引，用于「取某目录的直接子项」——
+    /// 这是增量对账的比对基准（LIKE 前缀查询走不了索引，必须靠这一列）。
+    pub parent: String,
     pub name: String,
     pub ext: String,
     pub is_dir: bool,
     pub size: i64,
     pub mtime: i64,
+    /// 亚秒精度 mtime（纳秒）。目录 mtime 对账必须用它：
+    /// 秒精度下同一秒内的二次增删会得到相同的值，变更会被漏掉。
+    pub mtime_ns: i64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -78,14 +84,19 @@ const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY,
     path TEXT NOT NULL UNIQUE,
+    parent TEXT NOT NULL DEFAULT '',
     name TEXT NOT NULL,
     ext TEXT NOT NULL DEFAULT '',
     is_dir INTEGER NOT NULL DEFAULT 0,
     size INTEGER NOT NULL DEFAULT 0,
-    mtime INTEGER NOT NULL DEFAULT 0
+    mtime INTEGER NOT NULL DEFAULT 0,
+    mtime_ns INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_files_name ON files(name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_files_mtime ON files(mtime);
+-- idx_files_parent 不在这里建：对老库而言上面的 CREATE TABLE 是空操作，
+-- parent 列要等 migrate() 里的 ALTER TABLE 之后才存在，否则这里会报
+-- "no such column: parent"。统一由 migrate() 负责。
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(name, content='files', content_rowid='id', tokenize='trigram');
 CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
   INSERT INTO files_fts(rowid, name) VALUES (new.id, new.name);
@@ -98,6 +109,12 @@ CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE OF name ON files BEGIN
   INSERT INTO files_fts(rowid, name) VALUES (new.id, new.name);
 END;
 CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(path UNINDEXED, body, tokenize='trigram');
+CREATE TABLE IF NOT EXISTS content_meta (
+    path TEXT PRIMARY KEY,
+    mtime_ns INTEGER NOT NULL DEFAULT 0,
+    bytes INTEGER NOT NULL DEFAULT 0,
+    indexed_at INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS apps (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -152,6 +169,9 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// `files` 表的统一列清单（别名固定为 `f`），列顺序须与 `map_file` 一致。
+const FILE_COLS: &str = "f.id, f.path, f.parent, f.name, f.ext, f.is_dir, f.size, f.mtime, f.mtime_ns";
+
 fn today_start_local() -> i64 {
     use chrono::{Local, TimeZone};
     let now = Local::now();
@@ -179,6 +199,119 @@ fn like_pattern(query: &str) -> String {
     }
     s.push('%');
     s
+}
+
+/// 取路径的直接父目录。
+///
+/// - `C:\Users\a.txt` → `C:\Users`
+/// - `C:\Users`       → `C:\`
+/// - `C:\`            → `""`（驱动器根没有父，必须返回空串，
+///   否则递归取子树时会形成自环）
+pub fn parent_of(path: &str) -> String {
+    if path.ends_with('\\') {
+        return String::new();
+    }
+    match path.rfind('\\') {
+        // 形如 `C:\foo`：最后一个分隔符在索引 2，父目录是 `C:\`（含分隔符）
+        Some(2) if path.as_bytes().get(1) == Some(&b':') => path[..3].to_string(),
+        Some(0) => String::new(),
+        Some(i) => path[..i].to_string(),
+        None => String::new(),
+    }
+}
+
+/// 构造「该目录下所有后代」的 GLOB 模式。
+///
+/// 用 GLOB 而非 LIKE：实测 `path GLOB 'x\*'` 会被 SQLite 改写为
+/// `path > ? AND path < ?` 走 UNIQUE 索引（SEARCH），而
+/// `path LIKE 'x\%'` 只能全表扫描（SCAN）。代价是 GLOB 没有转义符，
+/// 通配符只能靠字符类 `[*]` 表达。
+pub fn glob_descendants(dir: &str) -> String {
+    let mut s = String::with_capacity(dir.len() + 2);
+    for c in dir.chars() {
+        match c {
+            '*' | '?' | '[' => {
+                s.push('[');
+                s.push(c);
+                s.push(']');
+            }
+            _ => s.push(c),
+        }
+    }
+    if !s.ends_with('\\') {
+        s.push('\\');
+    }
+    s.push('*');
+    s
+}
+
+/// 由 SystemTime 取纳秒时间戳（目录 mtime 对账用）
+pub fn mtime_ns_of(t: std::time::SystemTime) -> i64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
+/// 老库结构迁移：补齐 `parent` / `mtime_ns` 列并回填，建立 `content_meta`。
+///
+/// 幂等，且对已迁移的库只做几次 `PRAGMA table_info` 级别的轻量检查。
+fn migrate(conn: &Connection) -> Result<()> {
+    let mut cols = std::collections::HashSet::new();
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(files)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            cols.insert(r.get::<_, String>(1)?);
+        }
+    }
+    if !cols.contains("parent") {
+        conn.execute("ALTER TABLE files ADD COLUMN parent TEXT NOT NULL DEFAULT ''", [])?;
+        log::info!("索引库迁移：新增 files.parent 列");
+    }
+    if !cols.contains("mtime_ns") {
+        conn.execute("ALTER TABLE files ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0", [])?;
+        log::info!("索引库迁移：新增 files.mtime_ns 列");
+    }
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_files_parent ON files(parent);")?;
+
+    // 回填 parent（只处理尚未回填且带分隔符的行）
+    let pending: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM files WHERE parent = '' AND instr(path, char(92)) > 0",
+        [],
+        |r| r.get(0),
+    )?;
+    if pending > 0 {
+        let pairs: Vec<(i64, String)> = {
+            let mut stmt =
+                conn.prepare("SELECT id, path FROM files WHERE parent = '' AND instr(path, char(92)) > 0")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        let tx = conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached("UPDATE files SET parent = ?1 WHERE id = ?2")?;
+            for (id, path) in &pairs {
+                stmt.execute(params![parent_of(path), id])?;
+            }
+        }
+        tx.commit()?;
+        log::info!("索引库迁移：回填 {} 条 parent", pairs.len());
+    }
+
+    // 旧库升级：content_meta 尚空但 content_fts 有数据 → 建索引关系（mtime_ns=0 视为待刷新）
+    let has_meta: i64 = conn.query_row("SELECT COUNT(*) FROM content_meta", [], |r| r.get(0))?;
+    if has_meta == 0 {
+        let has_content: i64 = conn.query_row("SELECT COUNT(*) FROM content_fts", [], |r| r.get(0))?;
+        if has_content > 0 {
+            conn.execute(
+                "INSERT OR IGNORE INTO content_meta(path, mtime_ns, bytes, indexed_at) \
+                 SELECT path, 0, length(body), ?1 FROM content_fts",
+                params![now()],
+            )?;
+            log::info!("索引库迁移：为 {has_content} 条既有正文建立 content_meta 记录");
+        }
+    }
+    Ok(())
 }
 
 pub fn type_extensions(category: &str) -> Option<&'static [&'static str]> {
@@ -271,15 +404,18 @@ impl Storage {
         }
         let conn = Connection::open(path).with_context(|| format!("打开数据库 {path:?}"))?;
         conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-16000;",
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; \
+             PRAGMA cache_size=-16000; PRAGMA busy_timeout=5000; PRAGMA wal_autocheckpoint=2000;",
         )?;
         conn.execute_batch(SCHEMA).context("初始化数据库结构")?;
+        migrate(&conn).context("迁移数据库结构")?;
         Ok(Storage { conn: Mutex::new(conn) })
     }
 
     pub fn open_in_memory() -> Result<Storage> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Storage { conn: Mutex::new(conn) })
     }
 
@@ -307,11 +443,24 @@ impl Storage {
         let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
-                "INSERT INTO files(path, name, ext, is_dir, size, mtime) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(path) DO UPDATE SET name = excluded.name, ext = excluded.ext, is_dir = excluded.is_dir, size = excluded.size, mtime = excluded.mtime",
+                "INSERT INTO files(path, parent, name, ext, is_dir, size, mtime, mtime_ns) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(path) DO UPDATE SET parent = excluded.parent, name = excluded.name, \
+                 ext = excluded.ext, is_dir = excluded.is_dir, size = excluded.size, \
+                 mtime = excluded.mtime, mtime_ns = excluded.mtime_ns",
             )?;
             for f in batch {
-                stmt.execute(params![f.path, f.name, f.ext, f.is_dir as i64, f.size, f.mtime])?;
+                let parent = if f.parent.is_empty() { parent_of(&f.path) } else { f.parent.clone() };
+                stmt.execute(params![
+                    f.path,
+                    parent,
+                    f.name,
+                    f.ext,
+                    f.is_dir as i64,
+                    f.size,
+                    f.mtime,
+                    f.mtime_ns
+                ])?;
             }
         }
         tx.commit()?;
@@ -322,31 +471,94 @@ impl Storage {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM files WHERE path = ?1", params![path])?;
         conn.execute("DELETE FROM content_fts WHERE path = ?1", params![path])?;
+        conn.execute("DELETE FROM content_meta WHERE path = ?1", params![path])?;
         Ok(())
     }
 
-    /// 删除某目录及其下所有条目
-    pub fn remove_path_tree(&self, path: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        let mut prefix = String::new();
-        for c in path.chars() {
-            if c == '%' || c == '_' || c == '\\' {
-                prefix.push('\\');
-            }
-            prefix.push(c);
+    /// 删除某目录及其下所有条目（含正文索引）。
+    ///
+    /// 子树用 `path GLOB 'dir\*'` 取：实测该写法被 SQLite 改写为范围查找并
+    /// 走 path 的 UNIQUE 索引，而等价的 LIKE 前缀写法只能全表扫描。
+    pub fn remove_path_tree(&self, path: &str) -> Result<usize> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let mut n = 0usize;
+        {
+            let glob = glob_descendants(path);
+            n += tx.execute("DELETE FROM files WHERE path = ?1", params![path])?;
+            n += tx.execute("DELETE FROM files WHERE path GLOB ?1", params![glob])?;
+            tx.execute("DELETE FROM content_fts WHERE path = ?1", params![path])?;
+            tx.execute("DELETE FROM content_fts WHERE path GLOB ?1", params![glob])?;
+            tx.execute("DELETE FROM content_meta WHERE path = ?1", params![path])?;
+            tx.execute("DELETE FROM content_meta WHERE path GLOB ?1", params![glob])?;
         }
-        let pat = format!("{prefix}\\%");
-        conn.execute("DELETE FROM files WHERE path = ?1", params![path])?;
-        conn.execute("DELETE FROM files WHERE path LIKE ?1 ESCAPE '\\'", params![pat])?;
-        conn.execute("DELETE FROM content_fts WHERE path = ?1", params![path])?;
-        conn.execute("DELETE FROM content_fts WHERE path LIKE ?1 ESCAPE '\\'", params![pat])?;
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// 批量删除（对账时清理已消失的子项）。逐条按子树处理。
+    pub fn remove_paths(&self, paths: &[String]) -> Result<usize> {
+        let mut total = 0usize;
+        for p in paths {
+            total += self.remove_path_tree(p)?;
+        }
+        Ok(total)
+    }
+
+    /// 清空文件索引与正文索引。
+    ///
+    /// 注意：这里**不再**追加 `INSERT INTO files_fts(files_fts) VALUES('rebuild')`。
+    /// `files_ad` 触发器已在 `DELETE FROM files` 时逐行维护了 files_fts，
+    /// 再 rebuild 一次是重复劳动（旧实现在这里多做一遍，属实测确认的冗余）。
+    pub fn clear_files(&self) -> Result<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM files", [])?;
+        tx.execute("DELETE FROM content_fts", [])?;
+        tx.execute("DELETE FROM content_meta", [])?;
+        tx.commit()?;
         Ok(())
     }
 
-    pub fn clear_files(&self) -> Result<()> {
+    /// 清空正文索引（保留文件索引）
+    pub fn clear_content(&self) -> Result<usize> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let n = tx.execute("DELETE FROM content_fts", [])?;
+        tx.execute("DELETE FROM content_meta", [])?;
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// 某目录的**直接子项** → (is_dir, mtime_ns, size)。
+    ///
+    /// 走 `idx_files_parent`，用于对账时比对「磁盘上实际有什么」与「库里记了什么」。
+    pub fn children_meta(&self, parent: &str) -> Result<std::collections::HashMap<String, (bool, i64, i64)>> {
         let conn = self.conn.lock();
-        conn.execute_batch("DELETE FROM files; DELETE FROM content_fts; INSERT INTO files_fts(files_fts) VALUES('rebuild');")?;
-        Ok(())
+        let mut stmt =
+            conn.prepare_cached("SELECT path, is_dir, mtime_ns, size FROM files WHERE parent = ?1")?;
+        let rows = stmt.query_map(params![parent], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                (r.get::<_, i64>(1)? != 0, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?),
+            ))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// 载入全部目录的 mtime 快照（path → mtime_ns），供对账常驻内存使用。
+    ///
+    /// 目录数量远少于文件数量，可以整表进内存，避免对每个目录各查一次库。
+    pub fn load_dir_mtimes(&self) -> Result<std::collections::HashMap<String, i64>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT path, mtime_ns FROM files WHERE is_dir = 1")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn dir_count(&self) -> i64 {
+        let conn = self.conn.lock();
+        conn.query_row("SELECT COUNT(*) FROM files WHERE is_dir = 1", [], |r| r.get(0)).unwrap_or(0)
     }
 
     pub fn file_count(&self) -> i64 {
@@ -369,10 +581,18 @@ impl Storage {
         .unwrap_or(0)
     }
 
+    /// 空闲页字节数。实测旧库 99.6MB 里有 53.3MB 是空闲页（53.5%）。
+    pub fn freelist_bytes(&self) -> i64 {
+        let conn = self.conn.lock();
+        let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0)).unwrap_or(0);
+        let page: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(0);
+        free * page
+    }
+
     pub fn file_by_path(&self, path: &str) -> Option<FileRecord> {
         let conn = self.conn.lock();
         conn.query_row(
-            "SELECT id, path, name, ext, is_dir, size, mtime FROM files WHERE path = ?1",
+            &format!("SELECT {FILE_COLS} FROM files f WHERE f.path = ?1"),
             params![path],
             map_file,
         )
@@ -391,14 +611,12 @@ impl Storage {
         let use_fts = q.chars().count() >= 3;
         let mut sql = if use_fts {
             args.push(fts_phrase(q).into());
-            String::from(
-                "SELECT f.id, f.path, f.name, f.ext, f.is_dir, f.size, f.mtime FROM files_fts JOIN files f ON f.id = files_fts.rowid WHERE files_fts MATCH ?",
+            format!(
+                "SELECT {FILE_COLS} FROM files_fts JOIN files f ON f.id = files_fts.rowid WHERE files_fts MATCH ?"
             )
         } else {
             args.push(like_pattern(q).into());
-            String::from(
-                "SELECT f.id, f.path, f.name, f.ext, f.is_dir, f.size, f.mtime FROM files f WHERE f.name LIKE ? ESCAPE '\\'",
-            )
+            format!("SELECT {FILE_COLS} FROM files f WHERE f.name LIKE ? ESCAPE '\\'")
         };
         sql.push_str(&scope_sql(scope, &mut args));
         sql.push_str(" ORDER BY length(f.name) ASC, f.mtime DESC LIMIT ?");
@@ -411,9 +629,7 @@ impl Storage {
 
     fn list_files_by_scope(&self, scope: &SearchScopeFilter, limit: usize) -> Result<Vec<FileRecord>> {
         let mut args: Vec<rusqlite::types::Value> = Vec::new();
-        let mut sql = String::from(
-            "SELECT f.id, f.path, f.name, f.ext, f.is_dir, f.size, f.mtime FROM files f WHERE 1 = 1",
-        );
+        let mut sql = format!("SELECT {FILE_COLS} FROM files f WHERE 1 = 1");
         sql.push_str(&scope_sql(scope, &mut args));
         sql.push_str(" ORDER BY f.mtime DESC LIMIT ?");
         args.push((limit as i64).into());
@@ -424,20 +640,95 @@ impl Storage {
     }
 
     // ---------------- 正文索引 ----------------
-    pub fn upsert_content(&self, path: &str, body: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute("DELETE FROM content_fts WHERE path = ?1", params![path])?;
-        conn.execute("INSERT INTO content_fts(path, body) VALUES (?1, ?2)", params![path, body])?;
+    /// 写入正文索引，同时更新 `content_meta`（记录被索引时的 mtime_ns）。
+    pub fn upsert_content(&self, path: &str, body: &str, mtime_ns: i64) -> Result<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM content_fts WHERE path = ?1", params![path])?;
+        tx.execute("INSERT INTO content_fts(path, body) VALUES (?1, ?2)", params![path, body])?;
+        tx.execute(
+            "INSERT INTO content_meta(path, mtime_ns, bytes, indexed_at) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(path) DO UPDATE SET mtime_ns = excluded.mtime_ns, bytes = excluded.bytes, \
+             indexed_at = excluded.indexed_at",
+            params![path, mtime_ns, body.len() as i64, now()],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
     pub fn has_content(&self, path: &str) -> bool {
         let conn = self.conn.lock();
-        conn.query_row("SELECT 1 FROM content_fts WHERE path = ?1 LIMIT 1", params![path], |_| Ok(()))
+        conn.query_row("SELECT 1 FROM content_meta WHERE path = ?1 LIMIT 1", params![path], |_| Ok(()))
             .optional()
             .ok()
             .flatten()
             .is_some()
+    }
+
+    /// 该文件是否需要（重新）建立正文索引。
+    ///
+    /// 旧实现用 `SELECT 1 FROM content_fts WHERE path = ?` 判断，而 `path` 是
+    /// FTS5 的 UNINDEXED 列 —— 该查询会**全表扫描** FTS5 内容表（实测查询计划为
+    /// `SCAN content_fts VIRTUAL TABLE`）。扫描期每个可索引文件调用一次，
+    /// 是初次全量扫描慢的主因之一。改查 `content_meta`（path 为主键）后为索引命中。
+    pub fn content_needs_update(&self, path: &str, mtime_ns: i64) -> bool {
+        let conn = self.conn.lock();
+        let existing: Option<i64> = conn
+            .query_row("SELECT mtime_ns FROM content_meta WHERE path = ?1", params![path], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten();
+        match existing {
+            // mtime_ns = 0 表示由老库迁移而来、新鲜度未知，视为待刷新
+            Some(mt) => mt != mtime_ns || mt == 0,
+            None => true,
+        }
+    }
+
+    pub fn content_bytes(&self) -> i64 {
+        let conn = self.conn.lock();
+        conn.query_row("SELECT COALESCE(SUM(bytes), 0) FROM content_meta", [], |r| r.get(0)).unwrap_or(0)
+    }
+
+    /// 正文索引里指向「文件索引中不存在的路径」的条目。
+    ///
+    /// 这些条目搜得到却打不开 —— 实测旧库里 543 条正文对应只有 1 条文件记录。
+    pub fn orphan_content_paths(&self, limit: usize) -> Vec<String> {
+        let conn = self.conn.lock();
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT m.path FROM content_meta m WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.path = m.path) LIMIT ?1",
+        ) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map(params![limit as i64], |r| r.get::<_, String>(0));
+        rows.map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    }
+
+    pub fn orphan_content_count(&self) -> i64 {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT COUNT(*) FROM content_meta m WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.path = m.path)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    }
+
+    /// 删除孤儿正文条目，返回删除条数。
+    pub fn purge_orphan_content(&self) -> Result<usize> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let n = tx.execute(
+            "DELETE FROM content_fts WHERE path IN \
+             (SELECT m.path FROM content_meta m WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.path = m.path))",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM content_meta WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.path = content_meta.path)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(n)
     }
 
     pub fn search_content(&self, query: &str, limit: usize) -> Result<Vec<ContentHit>> {
@@ -738,17 +1029,193 @@ impl Storage {
         conn.execute("DELETE FROM hotkeys WHERE id = ?1", params![id])?;
         Ok(())
     }
+
+    // ---------------- 重命名 / 移动：迁移引用方 ----------------
+    /// 把 `from`（文件或目录，含其整棵子树）在库中的路径全部改写到 `to`。
+    ///
+    /// 需要迁移的不只是 `files`：`pins.item_id`、`recent.item_id` 形如
+    /// `file:<path>` / `folder:<path>`，`hotkeys.target_path` 存原始路径。
+    /// 不迁移的话，文件改名后置顶与最近使用会指向一个不存在的路径 —— 点开即失败。
+    pub fn rename_prefix(&self, from: &str, to: &str) -> Result<usize> {
+        if from.is_empty() || from == to {
+            return Ok(0);
+        }
+        let glob = glob_descendants(from);
+        // SQLite substr 为 1 基：n = from.len() + 1 即「from 之后的剩余部分」
+        let n = (from.len() + 1) as i64;
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let mut affected = 0usize;
+        {
+            affected += tx.execute(
+                "UPDATE files SET path = ?1, parent = ?2 WHERE path = ?3",
+                params![to, parent_of(to), from],
+            )?;
+            affected += tx.execute(
+                "UPDATE files SET path = ?1 || substr(path, ?2) WHERE path GLOB ?3",
+                params![to, n, glob],
+            )?;
+            // 子树内部的 parent 也要跟着改（直接子项的 parent 已在上面被重写）
+            tx.execute(
+                "UPDATE files SET parent = ?1 || substr(parent, ?2) WHERE parent GLOB ?3",
+                params![to, n, glob],
+            )?;
+
+            tx.execute("UPDATE content_fts SET path = ?1 WHERE path = ?2", params![to, from])?;
+            tx.execute(
+                "UPDATE content_meta SET path = ?1 || substr(path, ?2) WHERE path GLOB ?3",
+                params![to, n, glob],
+            )?;
+            tx.execute("UPDATE content_meta SET path = ?1 WHERE path = ?2", params![to, from])?;
+
+            for table in ["pins", "recent"] {
+                tx.execute(
+                    &format!(
+                        "UPDATE {table} SET item_id = substr(item_id, 1, instr(item_id, ':')) || ?1 || substr(path, ?2), \
+                         path = ?1 || substr(path, ?2) WHERE path = ?3",
+                    ),
+                    params![to, n, from],
+                )?;
+                tx.execute(
+                    &format!(
+                        "UPDATE {table} SET item_id = substr(item_id, 1, instr(item_id, ':')) || ?1 || substr(path, ?2), \
+                         path = ?1 || substr(path, ?2) WHERE path GLOB ?3",
+                    ),
+                    params![to, n, glob],
+                )?;
+            }
+            tx.execute(
+                "UPDATE hotkeys SET target_path = ?1 || substr(target_path, ?2) WHERE target_path = ?3",
+                params![to, n, from],
+            )?;
+            tx.execute(
+                "UPDATE hotkeys SET target_path = ?1 || substr(target_path, ?2) WHERE target_path GLOB ?3",
+                params![to, n, glob],
+            )?;
+        }
+        tx.commit()?;
+        Ok(affected)
+    }
+
+    // ---------------- 一致性 / 空间维护 ----------------
+    pub fn integrity(&self) -> IntegrityReport {
+        let conn = self.conn.lock();
+        let one = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap_or(-1) };
+        let files = one("SELECT COUNT(*) FROM files");
+        let dirs = one("SELECT COUNT(*) FROM files WHERE is_dir = 1");
+        let content = one("SELECT COUNT(*) FROM content_fts");
+        let meta = one("SELECT COUNT(*) FROM content_meta");
+        let orphan = one(
+            "SELECT COUNT(*) FROM content_meta m WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.path = m.path)",
+        );
+        let dangling_pins = one(
+            "SELECT COUNT(*) FROM pins p WHERE p.kind IN ('file','folder') AND NOT EXISTS (SELECT 1 FROM files f WHERE f.path = p.path)",
+        );
+        let dangling_recent = one(
+            "SELECT COUNT(*) FROM recent r WHERE r.kind IN ('file','folder') AND NOT EXISTS (SELECT 1 FROM files f WHERE f.path = r.path)",
+        );
+        let page_count: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0);
+        let page_size: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(0);
+        let freelist: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0)).unwrap_or(0);
+        IntegrityReport {
+            files,
+            dirs,
+            content,
+            content_meta: meta,
+            orphan_content: orphan,
+            dangling_pins,
+            dangling_recent,
+            db_bytes: page_count * page_size,
+            freelist_bytes: freelist * page_size,
+        }
+    }
+
+    /// 空间回收：WAL checkpoint + 按需 VACUUM + 查询计划统计刷新。
+    ///
+    /// VACUUM 会重写整个库（本机实测 99.6MB → 46.3MB），代价高，
+    /// 因此只在空闲页占比超阈值或显式强制时执行。
+    pub fn maintenance(&self, force: bool) -> Result<MaintenanceReport> {
+        let conn = self.conn.lock();
+        let before = {
+            let page_count: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0);
+            let page_size: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(0);
+            let freelist: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0)).unwrap_or(0);
+            (page_count * page_size, freelist * page_size)
+        };
+        // 先把 WAL 落盘并截断，否则 VACUUM 的收益会被 WAL 抵消
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
+        let (total, free) = before;
+        let should_vacuum = force || (free >= 16 * 1024 * 1024 && total > 0 && free * 100 / total >= 25);
+        let mut vacuumed = false;
+        if should_vacuum {
+            let started = std::time::Instant::now();
+            conn.execute_batch("VACUUM;")?;
+            vacuumed = true;
+            log::info!("索引库 VACUUM 完成，耗时 {:?}", started.elapsed());
+        }
+        // 让 SQLite 依据真实查询模式更新统计信息（比 ANALYZE 更轻）
+        let _ = conn.execute_batch("PRAGMA optimize;");
+
+        let after = {
+            let page_count: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0);
+            let page_size: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(0);
+            let freelist: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0)).unwrap_or(0);
+            (page_count * page_size, freelist * page_size)
+        };
+        Ok(MaintenanceReport {
+            vacuumed,
+            before_bytes: total,
+            after_bytes: after.0,
+            before_free: free,
+            after_free: after.1,
+        })
+    }
+}
+
+/// 索引一致性快照
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IntegrityReport {
+    pub files: i64,
+    pub dirs: i64,
+    pub content: i64,
+    pub content_meta: i64,
+    /// 正文索引里找不到对应文件的条目数（搜得到、打不开）
+    pub orphan_content: i64,
+    pub dangling_pins: i64,
+    pub dangling_recent: i64,
+    pub db_bytes: i64,
+    pub freelist_bytes: i64,
+}
+
+impl IntegrityReport {
+    /// 是否处于健康状态（无孤儿正文、无悬空引用）
+    pub fn healthy(&self) -> bool {
+        self.orphan_content == 0 && self.dangling_pins == 0 && self.dangling_recent == 0
+    }
+}
+
+/// 空间回收结果
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MaintenanceReport {
+    pub vacuumed: bool,
+    pub before_bytes: i64,
+    pub after_bytes: i64,
+    pub before_free: i64,
+    pub after_free: i64,
 }
 
 fn map_file(r: &rusqlite::Row<'_>) -> rusqlite::Result<FileRecord> {
     Ok(FileRecord {
         id: r.get(0)?,
         path: r.get(1)?,
-        name: r.get(2)?,
-        ext: r.get(3)?,
-        is_dir: r.get::<_, i64>(4)? != 0,
-        size: r.get(5)?,
-        mtime: r.get(6)?,
+        parent: r.get(2)?,
+        name: r.get(3)?,
+        ext: r.get(4)?,
+        is_dir: r.get::<_, i64>(5)? != 0,
+        size: r.get(6)?,
+        mtime: r.get(7)?,
+        mtime_ns: r.get(8)?,
     })
 }
 

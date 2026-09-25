@@ -1,6 +1,7 @@
 //! Application Core：聚合搜索、索引、存储、剪贴板、热键、系统动作，向 UI 提供统一 API。
 
 pub mod apps;
+pub mod cli;
 pub mod hotkey;
 pub mod indexer;
 pub mod launcher;
@@ -493,6 +494,49 @@ impl AppCore {
 
     pub fn rebuild_index(&self) {
         self.indexer.rebuild();
+    }
+
+    /// 只做增量对账（不清空），用于设置页「立即检查更新」
+    pub fn reconcile_index(&self) {
+        self.indexer.reconcile_now();
+    }
+
+    /// 全量校验：强制检查每个目录的子项，但不清空。
+    ///
+    /// 用于补回「应用未运行期间文件被改写、而目录 mtime 不变」的情形 ——
+    /// 增量对账看不到这类变更（见 `indexer.rs` 的 `FULL_RESCAN_INTERVAL` 注释）。
+    pub fn full_rescan_index(&self) {
+        self.indexer.full_rescan();
+    }
+
+    /// 索引一致性快照 + 上一轮扫描状态。
+    ///
+    /// 设置页用它把「正文索引 543 条却只有 1 个文件」这类不一致直接摆到用户面前。
+    pub fn index_health(&self) -> (storage::IntegrityReport, indexer::IndexStatus) {
+        (self.storage.integrity(), self.indexer.status())
+    }
+
+    /// 强制整理索引库：WAL checkpoint + VACUUM。
+    /// 实测本机 99.6MB 的库整理后为 46.3MB。
+    pub fn compact_index(&self) -> Result<String> {
+        let r = self.storage.maintenance(true)?;
+        let mb = |b: i64| format!("{:.1} MB", b as f64 / 1_048_576.0);
+        Ok(if r.vacuumed {
+            format!(
+                "索引库已整理：{} → {}（空闲页 {} → {}）",
+                mb(r.before_bytes),
+                mb(r.after_bytes),
+                mb(r.before_free),
+                mb(r.after_free)
+            )
+        } else {
+            format!("索引库无需整理（当前 {}，空闲页 {}）", mb(r.after_bytes), mb(r.after_free))
+        })
+    }
+
+    /// 清理正文索引中已找不到对应文件的条目，返回清理条数
+    pub fn purge_orphan_content(&self) -> Result<usize> {
+        self.storage.purge_orphan_content()
     }
 
     pub fn clear_clipboard_history(&self) -> Result<usize> {
