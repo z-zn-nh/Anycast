@@ -1,0 +1,273 @@
+// 统一结果区：列表视图（42px 行 + 分组标题）与大图标网格视图，空闲/搜索双态互通
+import { Theme } from "../styles/tokens.slint";
+import { Icon, Squircle, Badge } from "widgets.slint";
+import { ResultItem, ResultRow, GridSection } from "types.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
+
+export component ResultPane inherits Rectangle {
+    in property <[ResultRow]> rows;
+    in property <[ResultItem]> items;
+    in property <[GridSection]> sections;
+    in property <string> view-mode: "list";
+    in property <int> selected: 0;
+    in property <length> selected-y: 0px;
+    in property <length> selected-h: 42px;
+    in property <string> query;
+    in property <bool> smart: false;
+    in property <string> empty-text: "";
+    out property <int> grid-cols: Math.max(1, Math.floor((root.width - 32px) / 115px));
+    out property <length> cell-height: 92px;
+    callback select(int);
+    callback activate(int);
+    callback context(int, length, length);
+
+    public function ensure-visible() {
+        if (root.view-mode == "grid") {
+            if (root.selected-y < -grid.content-y) {
+                grid.content-y = -root.selected-y;
+            } else if (root.selected-y + root.selected-h > -grid.content-y + grid.visible-height) {
+                grid.content-y = -(root.selected-y + root.selected-h - grid.visible-height);
+            }
+        } else {
+            if (root.selected-y < -list.content-y) {
+                list.content-y = -root.selected-y;
+            } else if (root.selected-y + root.selected-h > -list.content-y + list.visible-height) {
+                list.content-y = -(root.selected-y + root.selected-h - list.visible-height);
+            }
+        }
+    }
+
+    public function scroll-top() {
+        list.content-y = 0px;
+        grid.content-y = 0px;
+    }
+
+    clip: true;
+
+    if root.items.length == 0 : VerticalLayout {
+        alignment: center;
+        spacing: 10px;
+        Icon { name: "search"; size: 40px; tint: Theme.text-muted; x: (root.width - 40px) / 2; }
+        Text {
+            text: root.empty-text != "" ? root.empty-text : (root.query == "" ? "暂无最近使用记录" : "未找到匹配「" + root.query + "」的项目");
+            font-size: 13px;
+            color: Theme.text-tertiary;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.query == "" ? "输入关键词开始搜索应用、文件与剪贴板" : "尝试切换分类标签，或按 Tab 切换至 ✦ 智能搜索模式";
+            font-size: 11px;
+            color: Theme.text-muted;
+            horizontal-alignment: center;
+        }
+    }
+
+    // ------------------------------ 列表视图 ------------------------------
+    list := ListView {
+        visible: root.view-mode != "grid" && root.items.length > 0;
+        x: 16px;
+        width: root.width - 32px;
+        height: root.height;
+        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        for row in root.rows : Rectangle {
+            height: row.is-header ? 26px : 42px;
+            if row.is-header : Text {
+                x: 0px;
+                text: row.header;
+                font-size: 11px;
+                font-weight: 600;
+                // 设计稿 .section-header { color: rgba(255,255,255,0.45); letter-spacing: 0.06em }
+                color: Theme.dark ? #ffffff73 : #00000073;
+                letter-spacing: 0.66px;
+                y: 9px;
+            }
+            if !row.is-header : Rectangle {
+                x: -6px;
+                width: parent.width + 12px;
+                y: 1px;
+                height: 40px;
+                border-radius: 8px;
+                background: root.selected == row.index ? Theme.selected : (rta.has-hover ? Theme.hover : transparent);
+                // 设计稿 .search-item.selected { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08) }
+                border-width: root.selected == row.index ? 1px : 0px;
+                border-color: Theme.dark ? #ffffff14 : #00000014;
+                animate background { duration: Theme.fast; }
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 12px;
+                    Squircle { icon: row.item.icon; size: 28px; y: 6px; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: row.item.title;
+                            font-size: 13px;
+                            font-weight: 500;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            max-width: 300px;
+                        }
+                        Badge { text: row.item.badge; y: 11px; }
+                    }
+                    Text {
+                        text: root.smart && row.item.reason != "" ? row.item.reason : row.item.subtitle;
+                        font-size: 11px;
+                        font-family: root.smart ? Theme.font : Theme.mono;
+                        // 对齐设计稿 .item-path-col：
+                        //   常态 rgba(255,255,255,0.4)，悬停/选中 rgba(255,255,255,0.65)
+                        //   智能模式下的 reason 用紫色高亮以示语义来源
+                        color: root.smart
+                            ? #c4b5fd
+                            : ((root.selected == row.index || rta.has-hover)
+                                ? (Theme.dark ? #ffffffa6 : #000000a6)
+                                : (Theme.dark ? #ffffff66 : #00000066));
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    // 行内动作提示（对齐设计稿 .item-action-col）：
+                    //   常态：10px / text-muted / opacity 0.5 / padding 1px 5px / radius 3px / 无底色
+                    //   选中：opacity 1 / #93c5fd / 底色 rgba(59,130,246,0.18)
+                    // 注意：设计稿的「3D 机械质感键帽」属于**右键菜单**（已由
+                    // context_menu.slint 的 MenuItemRow 实现），结果行这里是低调的文字胶囊。
+                    if row.item.action != "" : Rectangle {
+                        width: act.preferred-width + 10px;
+                        height: 16px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 3px;
+                        background: root.selected == row.index ? #3b82f62e : transparent;
+                        act := Text {
+                            text: row.item.action;
+                            font-size: 10px;
+                            color: root.selected == row.index ? #93c5fd : Theme.text-muted;
+                            opacity: root.selected == row.index ? 1 : 0.5;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                            width: parent.width;
+                            height: parent.height;
+                        }
+                    }
+                }
+                rta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.select(row.index); }
+                    double-clicked => { root.activate(row.index); }
+                    pointer-event(ev) => {
+                        if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.down) {
+                            root.select(row.index);
+                            root.context(row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------ 图标网格视图 ------------------------------
+    grid := ScrollView {
+        visible: root.view-mode == "grid" && root.items.length > 0;
+        x: 16px;
+        width: root.width - 32px;
+        height: root.height;
+        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        content-width: self.visible-width;
+        VerticalLayout {
+            width: grid.visible-width;
+            spacing: 0px;
+            alignment: start;
+            for sec in root.sections : VerticalLayout {
+                spacing: 0px;
+                Rectangle {
+                    height: 26px;
+                    Text {
+                        x: 0px;
+                        text: sec.title;
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: Theme.dark ? #ffffff73 : #00000073;
+                        letter-spacing: 0.66px;
+                        y: 9px;
+                    }
+                }
+                Rectangle {
+                    height: Math.ceil(sec.count / root.grid-cols) * root.cell-height;
+                    property <length> cell-w: (grid.visible-width) / root.grid-cols;
+                    for j in sec.count : Rectangle {
+                        property <int> idx: sec.start + j;
+                        x: Math.mod(j, root.grid-cols) * parent.cell-w;
+                        y: Math.floor(j / root.grid-cols) * root.cell-height;
+                        width: parent.cell-w;
+                        height: root.cell-height;
+                        Rectangle {
+                            x: 2px;
+                            y: 2px;
+                            width: parent.width - 4px;
+                            height: parent.height - 4px;
+                            border-radius: 6px;
+                            // 设计稿 .icon-card-item.selected { background: rgba(255,255,255,0.12); box-shadow: 0 0 0 1px rgba(255,255,255,0.18) }
+                            background: root.selected == idx
+                                ? (Theme.dark ? #ffffff1f : #0000000f)
+                                : (gta.has-hover ? Theme.hover : transparent);
+                            border-width: root.selected == idx ? 1px : 0px;
+                            border-color: Theme.dark ? #ffffff2e : #0000002e;
+                            animate background { duration: Theme.fast; }
+                            VerticalLayout {
+                                padding-top: 12px;
+                                padding-bottom: 8px;
+                                padding-left: 6px;
+                                padding-right: 6px;
+                                spacing: 6px;
+                                alignment: start;
+                                Squircle { icon: root.items[idx].icon; size: 38px; x: (parent.width - 38px) / 2; }
+                                Text {
+                                    text: root.items[idx].title;
+                                    font-size: 11px;
+                                    font-weight: 500;
+                                    color: Theme.text-primary;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                }
+                                // 设计稿 .icon-card-badge：9.5px / text-tertiary /
+                                //   bg rgba(255,255,255,0.06) / padding 1px 5px / radius 3px
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        height: 14px;
+                                        width: bt.preferred-width + 10px;
+                                        border-radius: 3px;
+                                        background: Theme.dark ? #ffffff0f : #0000000f;
+                                        bt := Text {
+                                            text: root.items[idx].badge;
+                                            font-size: 9.5px;
+                                            color: Theme.text-tertiary;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+                                }
+                            }
+                            gta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.select(idx); }
+                                double-clicked => { root.activate(idx); }
+                                pointer-event(ev) => {
+                                    if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.down) {
+                                        root.select(idx);
+                                        root.context(idx, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

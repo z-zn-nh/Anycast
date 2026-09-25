@@ -1,0 +1,68 @@
+// 前后端共享的 Slint 结构体（由 Rust 侧填充）
+export struct ResultItem {
+    id: string,
+    kind: string,        // app | file | folder | clipboard
+    title: string,
+    subtitle: string,
+    badge: string,
+    icon: string,
+    section: string,
+    reason: string,
+    action: string,
+    is-pinned: bool,
+    preview: string,
+    sub-type: string,
+}
+
+export struct ResultRow {
+    is-header: bool,
+    header: string,
+    index: int,
+    item: ResultItem,
+}
+
+export struct GridSection {
+    title: string,
+    start: int,
+    count: int,
+}
+
+export struct HotkeyBinding {
+    id: string,
+    name: string,
+    path: string,
+    hotkey: string,
+    kind: string,        // app | folder | file | script
+    enabled: bool,
+    icon: string,
+    badge: string,
+}
+
+export struct IntentChip {
+    key: string,
+    val: string,
+}
+
+export struct CalDay {
+    day: int,
+    date: string,
+    other-month: bool,
+    today: bool,
+    range-start: bool,
+    range-end: bool,
+    in-range: bool,
+}
+
+export struct LocationEntry {
+    id: string,
+    name: string,
+    path: string,
+    sub: string,
+    icon: string,
+    group: int,          // 0 磁盘与常用目录, 1 工作区
+}
+
+export struct SelectOption {
+    value: string,
+    label: string,
+}

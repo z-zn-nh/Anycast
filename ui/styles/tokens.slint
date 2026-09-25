@@ -1,0 +1,53 @@
+// Anycast 视觉 Token（对应原型 tokens.css）：深浅色、亚克力透光档位、文字阶梯、材质色阶
+export global Theme {
+    in-out property <bool> dark: true;
+    // balanced | high | solid
+    in-out property <string> opacity-preset: "balanced";
+    in-out property <bool> rim-light: true;
+    // QA 开关：ANYCAST_OPAQUE_BG=1 时窗口底质完全不透明，便于截图逐像素比对（不影响正常使用）
+    in-out property <bool> opaque-bg: false;
+
+    out property <color> acrylic-bg: opaque-bg
+        ? (dark ? #14171f : #fcfdff)
+        : dark
+        ? (opacity-preset == "high" ? #12151e94 : opacity-preset == "solid" ? #14171fdb : #14171fb8)
+        : (opacity-preset == "high" ? #fafcff9e : opacity-preset == "solid" ? #fcfdffe6 : #fcfdffc7);
+    out property <color> border: dark ? #ffffff1f : #0000001f;
+    out property <color> border-subtle: dark ? #ffffff0f : #0000000f;
+    out property <color> border-highlight: dark ? #ffffff38 : #ffffffe6;
+
+    out property <color> text-primary: dark ? #ffffff : #0f172a;
+    out property <color> text-secondary: dark ? #e2e8f0 : #334155;
+    out property <color> text-tertiary: dark ? #94a3b8 : #64748b;
+    out property <color> text-muted: dark ? #64748b : #94a3b8;
+    out property <color> text-placeholder: dark ? #ffffff80 : #0f172a7a;
+    out property <color> text-soft: dark ? #ffffffbf : #0f172abf;
+
+    out property <color> subtle: dark ? #ffffff0a : #00000008;
+    out property <color> hover: dark ? #ffffff14 : #0000000d;
+    out property <color> selected: dark ? #ffffff1c : #0000000f;
+    out property <color> active: dark ? #ffffff24 : #00000014;
+    out property <color> popover-bg: dark ? #121620e0 : #fcfcfef5;
+    out property <color> sidebar-bg: dark ? #10141c52 : #f1f5f980;
+    out property <color> card-bg: dark ? #ffffff0a : #ffffffb3;
+    out property <color> overlay: dark ? #00000029 : #0000001f;
+    out property <color> keycap-bg: dark ? #ffffff14 : #00000010;
+    out property <color> keycap-border: dark ? #ffffff29 : #00000024;
+    out property <color> keycap-bottom: dark ? #ffffff47 : #00000040;
+    out property <color> switch-on: dark ? #ffffff38 : #0f172a;
+    out property <color> knob-on: dark ? #ffffff : #ffffff;
+
+    out property <color> accent: #3b82f6;
+    out property <color> ai: #8b5cf6;
+    out property <color> ai-soft: #8b5cf629;
+    out property <color> danger: #ef4444;
+    out property <color> danger-soft: #ef444438;
+    out property <color> success: #10b981;
+    out property <color> warning: #f59e0b;
+
+    out property <string> font: "Segoe UI";
+    out property <string> mono: "Cascadia Mono";
+    out property <duration> fast: 100ms;
+    out property <duration> normal: 180ms;
+    out property <easing> ease: cubic-bezier(0.16, 1, 0.3, 1);
+}

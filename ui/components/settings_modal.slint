@@ -1,0 +1,538 @@
+// 偏好设置：纯双栏（侧栏直通顶部 + 内容区），WinUI 3 组群卡片，快捷直达绑定管理
+import { Theme } from "../styles/tokens.slint";
+import { Icon, Squircle, Badge, FluentSwitch, Keycap, PillSelect, TextField, ActionButton, GhostButton } from "widgets.slint";
+import { HotkeyBinding, ResultItem, SelectOption } from "types.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// 设置状态与回调（由 Rust 通过 global 读写）
+export global Settings {
+    in-out property <string> tab: "general";
+    // 常规
+    in-out property <string> wake-hotkey: "Alt+Space";
+    in-out property <bool> launch-on-startup: false;
+    in-out property <bool> hide-on-blur: true;
+    in-out property <string> default-mode: "fast";
+    in-out property <bool> double-click: true;
+    in-out property <string> cache-info: "";
+    // 外观
+    in-out property <string> theme: "dark";
+    in-out property <string> opacity-preset: "balanced";
+    in-out property <bool> gpu-blur: true;
+    in-out property <bool> rim-light: true;
+    // 快捷直达
+    in-out property <[HotkeyBinding]> hotkeys: [];
+    in-out property <bool> hotkeys-master: true;
+    in-out property <string> recording-id: "";
+    in-out property <bool> add-open: false;
+    in-out property <string> new-name: "";
+    in-out property <string> new-path: "";
+    in-out property <string> new-kind: "app";
+    in-out property <string> new-combo: "Alt+K";
+    in-out property <[ResultItem]> recent-picker: [];
+    // 搜索与索引
+    in-out property <bool> incremental: true;
+    in-out property <bool> content-index: true;
+    in-out property <bool> include-hidden: false;
+    in-out property <bool> exclude-caches: true;
+    in-out property <string> index-stats: "";
+    in-out property <string> index-roots: "";
+    in-out property <bool> indexing: false;
+    // 剪贴板
+    in-out property <bool> clip-enabled: true;
+    in-out property <string> clip-limit: "500";
+    in-out property <bool> clip-dedupe: true;
+    in-out property <bool> clip-ignore-pm: true;
+    in-out property <bool> clip-mask: false;
+    in-out property <string> clip-stats: "";
+    // AI
+    in-out property <bool> ai-enabled: false;
+    in-out property <bool> ai-lazy: true;
+    in-out property <bool> ai-intent: true;
+    in-out property <string> ai-model: "bge-small-zh · 未安装（接口就绪）";
+
+    callback set-bool(string, bool);
+    callback set-string(string, string);
+    callback action(string);
+    callback hotkey-toggle(string, bool);
+    callback hotkey-test(string);
+    callback hotkey-delete(string);
+    callback hotkey-record(string);
+    callback pick-recent(int);
+}
+
+component NavItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked;
+    // 对齐设计稿 .settings-nav-item：
+    //   height 38px / padding 0 12px / gap 10px / radius 6px / font 13px
+    //   normal rgba(255,255,255,0.75)；active bg 0.075 + #fff + weight 500；hover bg 0.045 + #fff
+    //   .active::before：left 0 / top 11px / 3×16 / radius 2px / 白 0.85 / 0 0 6px 白 0.35
+    height: 38px;
+    border-radius: 6px;
+    background: active ? Theme.hover : (ta.has-hover ? Theme.subtle : transparent);
+    animate background { duration: Theme.fast; }
+    if root.active : Rectangle {
+        x: 0px; y: 11px; width: 3px; height: 16px; border-radius: 2px;
+        background: #ffffffd9;
+        drop-shadow-blur: 6px; drop-shadow-color: #ffffff59;
+    }
+    HorizontalLayout {
+        padding-left: 12px; spacing: 10px;
+        Icon {
+            name: root.icon;
+            size: 15px;
+            tint: root.active ? Theme.text-primary : Theme.text-soft;
+            y: (root.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            font-size: 13px;
+            font-weight: root.active ? 500 : 400;
+            color: root.active ? Theme.text-primary : Theme.text-soft;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component Group inherits VerticalLayout {
+    in property <string> title;
+    spacing: 6px;
+    // 设计稿 .settings-card-group-title：
+    //   11px / rgba(255,255,255,0.55) / 600 / uppercase / letter-spacing 0.5px
+    if root.title != "" : Text {
+        text: root.title;
+        font-size: 11px;
+        font-weight: 600;
+        color: Theme.dark ? #ffffff8c : #0000008c;
+        letter-spacing: 0.5px;
+    }
+    Rectangle {
+        // 设计稿 .settings-card-container：
+        //   bg rgba(255,255,255,0.038) / border 1px rgba(255,255,255,0.08) / radius 8px
+        border-radius: 8px;
+        background: Theme.dark ? #ffffff0a : #0000000a;
+        border-width: 1px;
+        border-color: Theme.dark ? #ffffff14 : #00000014;
+        VerticalLayout {
+            padding: 2px;
+            spacing: 0px;
+            @children
+        }
+    }
+}
+
+component Row inherits Rectangle {
+    in property <string> label;
+    in property <string> desc;
+    in property <bool> divider: true;
+    // 设计稿 .settings-card-row：padding 11px 16px / min-height 52px
+    //        .settings-row-label：13px / 500 / #fff
+    //        .settings-row-desc：11px / rgba(255,255,255,0.6)
+    height: 54px;
+    HorizontalLayout {
+        padding-left: 16px; padding-right: 16px; spacing: 12px;
+        VerticalLayout {
+            alignment: center; spacing: 3px; horizontal-stretch: 1;
+            Text { text: root.label; font-size: 13px; font-weight: 500; color: Theme.text-primary; overflow: elide; }
+            Text { text: root.desc; font-size: 11px; color: Theme.dark ? #ffffff99 : #00000099; overflow: elide; }
+        }
+        VerticalLayout { alignment: center; @children }
+    }
+    if root.divider : Rectangle { y: root.height - 1px; height: 1px; x: 12px; width: root.width - 24px; background: Theme.border-subtle; }
+}
+
+component PaneHeader inherits VerticalLayout {
+    in property <string> title;
+    in property <string> desc;
+    // 设计稿 .settings-pane-title：20px / 600 / #fff / letter-spacing -0.2px
+    //        .settings-pane-desc：12px / rgba(255,255,255,0.6) / margin-top 3px
+    spacing: 3px;
+    Text {
+        text: root.title;
+        font-size: 20px;
+        font-weight: 600;
+        color: Theme.text-primary;
+        letter-spacing: -0.2px;
+    }
+    Text {
+        text: root.desc;
+        font-size: 12px;
+        color: Theme.dark ? #ffffff99 : #00000099;
+        wrap: word-wrap;
+    }
+}
+
+component HotkeyCard inherits Rectangle {
+    in property <HotkeyBinding> b;
+    in property <bool> recording: false;
+    height: 58px;
+    border-radius: 8px;
+    background: ta.has-hover ? Theme.hover : Theme.subtle;
+    opacity: b.enabled ? 1 : 0.55;
+    animate background { duration: Theme.fast; }
+    ta := TouchArea { }
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 10px; spacing: 12px;
+        Squircle { icon: root.b.icon; size: 32px; y: 13px; }
+        VerticalLayout {
+            alignment: center; spacing: 3px; horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 8px; alignment: start;
+                Text { text: root.b.name; font-size: 12.5px; font-weight: 600; color: Theme.text-primary; overflow: elide; max-width: 220px; }
+                Badge { text: root.b.badge; }
+            }
+            Text { text: root.b.path; font-size: 10.5px; font-family: Theme.mono; color: Theme.text-tertiary; overflow: elide; }
+        }
+        Rectangle {
+            width: cap.width; height: 26px; y: 16px;
+            cap := Keycap { label: root.recording ? "按下按键..." : root.b.hotkey; recording: root.recording; }
+            TouchArea { mouse-cursor: pointer; clicked => { Settings.hotkey-record(root.b.id); } }
+        }
+        GhostButton { icon: "play"; tooltip: "测试运行"; btn-height: 28px; padding-x: 7.5px; y: 16px; clicked => { Settings.hotkey-test(root.b.id); } }
+        FluentSwitch { checked: root.b.enabled; y: 19px; toggled(v) => { Settings.hotkey-toggle(root.b.id, v); } }
+        GhostButton { icon: "trash"; hover-tint: #fca5a5; hover-bg: Theme.danger-soft; btn-height: 28px; padding-x: 7.5px; y: 16px; clicked => { Settings.hotkey-delete(root.b.id); } }
+    }
+}
+
+export component SettingsModal inherits Rectangle {
+    callback close;
+    border-radius: 12px;
+    background: Theme.dark ? #121620d9 : #fcfdfff0;
+    border-width: 1px;
+    border-color: Theme.dark ? #ffffff24 : #0000001a;
+    drop-shadow-blur: 60px;
+    drop-shadow-offset-y: 24px;
+    drop-shadow-color: #0000008c;
+    clip: true;
+
+    HorizontalLayout {
+        // 侧栏
+        Rectangle {
+            // 设计稿 .settings-sidebar：width 195px / padding 18px 10px /
+            //   bg rgba(16,20,28,0.32) / border-right 1px rgba(255,255,255,0.08)
+            width: 195px;
+            background: Theme.sidebar-bg;
+            Rectangle {
+                x: parent.width - 1px; width: 1px;
+                background: Theme.dark ? #ffffff14 : #00000014;
+            }
+            VerticalLayout {
+                padding-top: 18px; padding-right: 10px; padding-bottom: 18px; padding-left: 10px;
+                spacing: 2px;
+                // 设计稿 .settings-sidebar-header：gap 10px / padding 0 8px 16px 8px /
+                //   margin-bottom 8px / border-bottom 1px rgba(255,255,255,0.06)
+                //   高度 = 24(内容) + 16(padding-bottom) + 8(margin) + 1(分隔线)
+                Rectangle {
+                    height: 49px;
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px; spacing: 10px;
+                        alignment: start;
+                        Rectangle {
+                            // .settings-brand-badge：24×24 / radius 6px / 微晶渐变 / border 0.18
+                            width: 24px; height: 24px; border-radius: 6px;
+                            background: @linear-gradient(135deg, #ffffff2e 0%, #ffffff0a 100%);
+                            border-width: 1px; border-color: #ffffff2e;
+                            Icon { name: "lightning"; size: 12px; tint: Theme.text-primary; x: 6px; y: 6px; }
+                        }
+                        // .settings-sidebar-brand-title：13.5px / 600 / #fff / letter-spacing 0.2px
+                        Text {
+                            text: "Anycast 设置";
+                            font-size: 13.5px; font-weight: 600;
+                            color: Theme.text-primary;
+                            letter-spacing: 0.2px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Rectangle {
+                        y: parent.height - 1px; height: 1px;
+                        x: 8px; width: parent.width - 16px;
+                        background: Theme.dark ? #ffffff0f : #0000000f;
+                    }
+                }
+                NavItem { icon: "settings"; label: "常规设置"; active: Settings.tab == "general"; clicked => { Settings.tab = "general"; } }
+                NavItem { icon: "palette"; label: "外观设置"; active: Settings.tab == "appearance"; clicked => { Settings.tab = "appearance"; } }
+                NavItem { icon: "keyboard"; label: "快捷直达"; active: Settings.tab == "hotkeys"; clicked => { Settings.tab = "hotkeys"; } }
+                NavItem { icon: "search"; label: "搜索与索引"; active: Settings.tab == "search"; clicked => { Settings.tab = "search"; } }
+                NavItem { icon: "clipboard"; label: "剪贴板历史"; active: Settings.tab == "clipboard"; clicked => { Settings.tab = "clipboard"; } }
+                NavItem { icon: "sparkles"; label: "AI 语义引擎"; active: Settings.tab == "ai"; clicked => { Settings.tab = "ai"; } }
+            }
+        }
+        // 内容区
+        Rectangle {
+            horizontal-stretch: 1;
+            // 设计稿 .settings-content-pane { background: rgba(255,255,255,0.012) }
+            background: Theme.dark ? #ffffff03 : #00000003;
+            ScrollView {
+                vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                content-width: self.visible-width;
+                VerticalLayout {
+                    width: parent.width;
+                    // 设计稿 .settings-content-pane：padding 24px 28px 36px 28px / gap 16px
+                    padding-top: 24px; padding-right: 28px; padding-bottom: 36px; padding-left: 28px;
+                    spacing: 16px;
+                    alignment: start;
+
+                    // ---------------- 常规 ----------------
+                    if Settings.tab == "general" : VerticalLayout {
+                        spacing: 16px;
+                        PaneHeader { title: "常规设置"; desc: "快捷唤醒、系统启动与基础桌面交互行为偏好"; }
+                        Group {
+                            title: "快捷唤醒与启动";
+                            Row {
+                                label: "全局唤醒快捷键"; desc: "在任意窗口或全屏程序下呼出 Anycast 居中浮动搜索窗口（点击键帽重新录制）";
+                                Rectangle {
+                                    width: wk.width; height: 26px;
+                                    wk := Keycap { label: Settings.recording-id == "__wake__" ? "按下按键..." : Settings.wake-hotkey; recording: Settings.recording-id == "__wake__"; }
+                                    TouchArea { mouse-cursor: pointer; clicked => { Settings.hotkey-record("__wake__"); } }
+                                }
+                            }
+                            Row { label: "开机自启动"; desc: "登录 Windows 桌面后自动在后台托盘静默就绪";
+                                FluentSwitch { checked: Settings.launch-on-startup; toggled(v) => { Settings.set-bool("launch_on_startup", v); } } }
+                            Row { label: "失去焦点时自动隐藏"; desc: "点击搜索窗口外部区域时自动平滑隐藏至后台"; divider: false;
+                                FluentSwitch { checked: Settings.hide-on-blur; toggled(v) => { Settings.set-bool("hide_on_blur", v); } } }
+                        }
+                        Group {
+                            title: "界面与交互偏好";
+                            Row { label: "默认初始搜索模式"; desc: "呼出窗口时默认采用的搜索模式（按 Tab 键可随时切换）";
+                                PillSelect { value: Settings.default-mode; label: Settings.default-mode == "smart" ? "✦ AI 智能模式" : "⚡ 极速模式 (默认)"; options: [{ value: "fast", label: "⚡ 极速模式 (默认)" }, { value: "smart", label: "✦ AI 智能模式" }]; changed(v) => { Settings.set-string("default_mode", v); } } }
+                            Row { label: "双击条目立即执行"; desc: "在列表项或图标卡片上双击时直接通过系统关联程序打开"; divider: false;
+                                FluentSwitch { checked: Settings.double-click; toggled(v) => { Settings.set-bool("double_click_launch", v); } } }
+                        }
+                        Group {
+                            title: "系统托盘与维护";
+                            Row { label: "常驻系统托盘"; desc: "Anycast 不占用任务栏与 Alt+Tab；关闭窗口即隐藏至托盘，点托盘图标或按唤醒热键唤出"; }
+                            Row { label: "索引库与缓存"; desc: Settings.cache-info; divider: false;
+                                ActionButton { label: "清理缓存"; clicked => { Settings.action("clear-cache"); } } }
+                        }
+                    }
+
+                    // ---------------- 外观 ----------------
+                    if Settings.tab == "appearance" : VerticalLayout {
+                        spacing: 16px;
+                        PaneHeader { title: "外观设置"; desc: "亚克力透光材质调校与深浅色彩模式（实时生效）"; }
+                        Group {
+                            title: "亚克力透光材质 (Acrylic Material)";
+                            Row { label: "材质透光度预设档位"; desc: "调节窗口磨砂毛玻璃透光比例与桌面环境融合度";
+                                PillSelect { value: Settings.opacity-preset; label: Settings.opacity-preset == "high" ? "高透灵动 (58% 强毛玻璃)" : Settings.opacity-preset == "solid" ? "沉稳聚焦 (86% 强对比)" : "平衡清晰 (72% 推荐)"; menu-width: 240px; options: [{ value: "balanced", label: "平衡清晰 (72% 推荐)" }, { value: "high", label: "高透灵动 (58% 强毛玻璃)" }, { value: "solid", label: "沉稳聚焦 (86% 强对比)" }]; changed(v) => { Settings.set-string("acrylic_opacity", v); } } }
+                            Row { label: "系统级 DWM 亚克力模糊"; desc: "调用 Windows 11 DWM Acrylic 背景材质进行硬件加速高斯模糊";
+                                FluentSwitch { checked: Settings.gpu-blur; toggled(v) => { Settings.set-bool("gpu_blur", v); } } }
+                            Row { label: "边缘高光与微晶质感"; desc: "在窗体顶部呈现 1px 晶莹高光边框以增强立体纵深感"; divider: false;
+                                FluentSwitch { checked: Settings.rim-light; toggled(v) => { Settings.set-bool("rim_light", v); } } }
+                        }
+                        Group {
+                            title: "色彩与主题模式 (Theme Mode)";
+                            Row { label: "界面色彩主题"; desc: "切换 Anycast 主窗口与设置面板的明暗视觉基调";
+                                PillSelect { value: Settings.theme; label: Settings.theme == "light" ? "☀️ 浅色模式 (Light)" : "🌙 深色模式 (Dark)"; options: [{ value: "dark", label: "🌙 深色模式 (Dark)" }, { value: "light", label: "☀️ 浅色模式 (Light)" }]; changed(v) => { Settings.set-string("theme", v); } } }
+                            Row { label: "强调色"; desc: "指示条、激活状态开关与主按键采用的视觉强调色"; divider: false;
+                                Badge { text: "亚克力晶体白 (Fluent White)"; } }
+                        }
+                    }
+
+                    // ---------------- 快捷直达 ----------------
+                    if Settings.tab == "hotkeys" : VerticalLayout {
+                        spacing: 14px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            PaneHeader { title: "快捷直达"; desc: "分配全局专属热键，在任意系统界面按下即可直接唤醒或定位，无需呼出搜索框"; horizontal-stretch: 1; }
+                            ActionButton { label: "添加绑定"; icon: "plus"; primary: true; y: 4px; clicked => { Settings.add-open = !Settings.add-open; } }
+                        }
+                        Group {
+                            Row { label: "全局热键直达服务"; desc: "系统底层全局静默监听注册按键，毫秒级唤起并激活目标程序"; divider: false;
+                                FluentSwitch { checked: Settings.hotkeys-master; toggled(v) => { Settings.set-bool("hotkeys_master_enabled", v); } } }
+                        }
+                        if Settings.add-open : Rectangle {
+                            border-radius: 8px;
+                            background: Theme.card-bg;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            height: addBody.preferred-height;
+                            addBody := VerticalLayout {
+                                padding: 14px;
+                                spacing: 10px;
+                                HorizontalLayout {
+                                    Text { text: "新建快捷键绑定"; font-size: 12.5px; font-weight: 600; color: Theme.text-primary; horizontal-stretch: 1; vertical-alignment: center; }
+                                    GhostButton { icon: "x"; btn-height: 20px; btn-radius: 4px; padding-x: 3.5px; clicked => { Settings.add-open = false; Settings.action("cancel-hotkey"); } }
+                                }
+                                Text { text: "绑定目标名称"; font-size: 11px; color: Theme.text-tertiary; }
+                                TextField { text <=> Settings.new-name; placeholder: "例如：Photoshop、工作笔记、下载目录"; }
+                                Text { text: "程序或文件完整路径"; font-size: 11px; color: Theme.text-tertiary; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    TextField { text <=> Settings.new-path; placeholder: "例如：C:\\Program Files\\...\\app.exe 或 D:\\Docs"; mono: true; horizontal-stretch: 1; }
+                                    Rectangle {
+                                        width: 90px; height: 30px;
+                                        ActionButton { label: "从列表选择"; clicked => { picker.show(); } }
+                                        picker := PopupWindow {
+                                            x: -200px; y: 34px; width: 290px;
+                                            Rectangle {
+                                                background: Theme.popover-bg; border-radius: 10px; border-width: 1px; border-color: Theme.border;
+                                                drop-shadow-blur: 24px; drop-shadow-color: #00000073; drop-shadow-offset-y: 10px;
+                                                VerticalLayout {
+                                                    padding: 6px; spacing: 1px;
+                                                    if Settings.recent-picker.length == 0 : Text { text: "暂无可用的最近记录"; font-size: 11px; color: Theme.text-muted; horizontal-alignment: center; height: 30px; vertical-alignment: center; }
+                                                    for it[i] in Settings.recent-picker : Rectangle {
+                                                        height: 32px; border-radius: 6px;
+                                                        background: pta.has-hover ? Theme.hover : transparent;
+                                                        HorizontalLayout {
+                                                            padding-left: 6px; padding-right: 6px; spacing: 8px;
+                                                            Squircle { icon: it.icon; size: 22px; y: 5px; }
+                                                            Text { text: it.title; font-size: 12px; color: Theme.text-primary; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                                            Badge { text: it.badge; y: 7px; }
+                                                        }
+                                                        pta := TouchArea { mouse-cursor: pointer; clicked => { Settings.pick-recent(i); } }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    ActionButton { label: "浏览..."; clicked => { Settings.action("browse-target"); } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 16px;
+                                    VerticalLayout {
+                                        spacing: 6px; horizontal-stretch: 1;
+                                        Text { text: "目标类型"; font-size: 11px; color: Theme.text-tertiary; }
+                                        PillSelect { value: Settings.new-kind; label: Settings.new-kind == "folder" ? "📁 文件夹目录" : Settings.new-kind == "file" ? "📄 文件 / 代码文档" : Settings.new-kind == "script" ? "⌨️ 脚本 (.bat / .ps1)" : "🚀 应用程序 (.exe / .lnk)"; options: [{ value: "app", label: "🚀 应用程序 (.exe / .lnk)" }, { value: "folder", label: "📁 文件夹目录" }, { value: "file", label: "📄 文件 / 代码文档" }, { value: "script", label: "⌨️ 脚本 (.bat / .ps1)" }]; changed(v) => { Settings.new-kind = v; } }
+                                    }
+                                    VerticalLayout {
+                                        spacing: 6px; horizontal-stretch: 1;
+                                        Text { text: "快捷键组合 (点击录制)"; font-size: 11px; color: Theme.text-tertiary; }
+                                        Rectangle {
+                                            height: 30px;
+                                            nk := Keycap { label: Settings.recording-id == "__new__" ? "按下快捷键组合..." : Settings.new-combo; recording: Settings.recording-id == "__new__"; }
+                                            TouchArea { mouse-cursor: pointer; clicked => { Settings.hotkey-record("__new__"); } }
+                                        }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px; alignment: end;
+                                    ActionButton { label: "取消"; clicked => { Settings.add-open = false; Settings.action("cancel-hotkey"); } }
+                                    ActionButton { label: "保存并生效"; primary: true; clicked => { Settings.action("save-hotkey"); } }
+                                }
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "已配置的快捷直达项目"; font-size: 11px; font-weight: 600; color: Theme.dark ? #ffffff8c : #0000008c; letter-spacing: 0.5px; }
+                            if Settings.hotkeys.length == 0 : Rectangle {
+                                height: 64px; border-radius: 8px; background: Theme.card-bg; border-width: 1px; border-color: Theme.border-subtle;
+                                Text { text: "暂无快捷直达绑定，点击右上角「添加绑定」开始配置"; font-size: 11.5px; color: Theme.text-tertiary; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                            }
+                            for hk in Settings.hotkeys : HotkeyCard { b: hk; recording: Settings.recording-id == hk.id; }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Icon { name: "info"; size: 13px; tint: Theme.text-tertiary; y: 1px; }
+                            Text { text: "建议优先使用 Alt + 单键 或 Ctrl + Shift + 单键，避开系统内置的全局快捷键（如 Ctrl+C、Win+L 等）。保存时会自动探测系统与其他程序的占用冲突。"; font-size: 11px; color: Theme.text-tertiary; wrap: word-wrap; horizontal-stretch: 1; }
+                        }
+                    }
+
+                    // ---------------- 搜索与索引 ----------------
+                    if Settings.tab == "search" : VerticalLayout {
+                        spacing: 16px;
+                        PaneHeader { title: "搜索与索引"; desc: "文件系统增量监控与 SQLite FTS5 trigram 倒排检索引擎配置"; }
+                        Group {
+                            title: "本地索引引擎核心";
+                            Row { label: "实时增量索引"; desc: "监听索引目录的文件新增、修改与删除（ReadDirectoryChangesW；USN Journal 需管理员权限，规划中）";
+                                FluentSwitch { checked: Settings.incremental; toggled(v) => { Settings.set-bool("incremental_index", v); } } }
+                            Row { label: "文件正文全文检索 (FTS5)"; desc: "针对 Markdown、代码、纯文本及配置文档建立正文倒排索引（智能模式使用）";
+                                FluentSwitch { checked: Settings.content-index; toggled(v) => { Settings.set-bool("content_index_enabled", v); } } }
+                            Row { label: "搜索结果包含隐藏文件"; desc: "允许检索点开头的配置目录与文件（如 .config）"; divider: false;
+                                FluentSwitch { checked: Settings.include-hidden; toggled(v) => { Settings.set-bool("include_hidden", v); } } }
+                        }
+                        Group {
+                            title: "索引范围与排除规则";
+                            Row { label: "自动排除大型开发构建缓存"; desc: "跳过 node_modules、.git、target、dist、.next、AppData 等目录以保障性能";
+                                FluentSwitch { checked: Settings.exclude-caches; toggled(v) => { Settings.set-bool("exclude_build_caches", v); } } }
+                            Rectangle {
+                                height: 76px;
+                                VerticalLayout {
+                                    padding-top: 10px; padding-right: 14px; padding-bottom: 10px; padding-left: 14px; spacing: 6px;
+                                    Text { text: "索引目录（以分号分隔，保存后重建索引生效）"; font-size: 12.5px; color: Theme.text-primary; }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        TextField { text <=> Settings.index-roots; placeholder: "C:\\Users\\me\\Desktop; D:\\Projects"; mono: true; horizontal-stretch: 1; }
+                                        ActionButton { label: "保存"; clicked => { Settings.set-string("index_roots", Settings.index-roots); } }
+                                    }
+                                }
+                            }
+                        }
+                        Group {
+                            title: "索引库统计与维护";
+                            Row { label: Settings.indexing ? "正在建立索引…" : "本地索引库状态"; desc: Settings.index-stats; divider: false;
+                                ActionButton { label: "重建索引"; icon: "reset"; enabled: !Settings.indexing; clicked => { Settings.action("rebuild-index"); } } }
+                        }
+                    }
+
+                    // ---------------- 剪贴板 ----------------
+                    if Settings.tab == "clipboard" : VerticalLayout {
+                        spacing: 16px;
+                        PaneHeader { title: "剪贴板历史记录"; desc: "本地保存复制记录，支持文本、代码片段与链接随时秒搜复用"; }
+                        Group {
+                            title: "监控与容量管理";
+                            Row { label: "启用剪贴板监控"; desc: "在系统后台捕获剪贴板文本变动，提供历史检索服务";
+                                FluentSwitch { checked: Settings.clip-enabled; toggled(v) => { Settings.set-bool("clipboard_enabled", v); } } }
+                            Row { label: "最大历史保留容量"; desc: "超出设定容量后自动清理未置顶固定的最旧历史项目";
+                                PillSelect { value: Settings.clip-limit; label: Settings.clip-limit + " 条"; menu-width: 160px; options: [{ value: "100", label: "100 条" }, { value: "300", label: "300 条" }, { value: "500", label: "500 条 (推荐)" }, { value: "1000", label: "1000 条" }]; changed(v) => { Settings.set-string("clipboard_limit", v); } } }
+                            Row { label: "相同内容自动合并置顶"; desc: "再次复制历史中已存在的内容时，自动刷新时间戳并移至首位"; divider: false;
+                                FluentSwitch { checked: Settings.clip-dedupe; toggled(v) => { Settings.set-bool("clipboard_dedupe", v); } } }
+                        }
+                        Group {
+                            title: "隐私与敏感数据保护";
+                            Row { label: "忽略密码管理器复制内容"; desc: "自动识别 1Password、Bitwarden、KeePass 等前台窗口，不记录其复制内容";
+                                FluentSwitch { checked: Settings.clip-ignore-pm; toggled(v) => { Settings.set-bool("clipboard_ignore_password_managers", v); } } }
+                            Row { label: "银行卡与身份证脱敏展示"; desc: "在剪贴板列表展示敏感卡号时自动将中段数字替换为星号"; divider: false;
+                                FluentSwitch { checked: Settings.clip-mask; toggled(v) => { Settings.set-bool("clipboard_mask_sensitive", v); } } }
+                        }
+                        Group {
+                            title: "存储与数据清理";
+                            Row { label: "本地存储"; desc: Settings.clip-stats;
+                                Badge { text: "● SQLite 本地库"; tint: #6ee7b7; } }
+                            Row { label: "清空历史数据"; desc: "一键彻底清除所有未固定的剪贴板历史记录"; divider: false;
+                                ActionButton { label: "清空未固定项目"; danger: true; clicked => { Settings.action("clear-clipboard"); } } }
+                        }
+                    }
+
+                    // ---------------- AI ----------------
+                    if Settings.tab == "ai" : VerticalLayout {
+                        spacing: 16px;
+                        PaneHeader { title: "AI 语义引擎"; desc: "自然语言意图理解 + 正文全文检索已就绪；本地向量嵌入模型为可插拔后端"; }
+                        Group {
+                            title: "本地模型与向量检索";
+                            Row { label: "AI 语义增强模式"; desc: "按 Tab 切换智能模式，支持「找一下昨天修改的架构设计」等自然语言描述";
+                                FluentSwitch { checked: Settings.ai-enabled; toggled(v) => { Settings.set-bool("ai_enabled", v); } } }
+                            Row { label: "本地向量 Embedding 模型"; desc: "sqlite-vec + bge-small-zh 量化模型（EmbeddingBackend 接口已预留）";
+                                Badge { text: Settings.ai-model; } }
+                            Row { label: "按需动态唤醒加载"; desc: "日常极速搜索不加载模型（0 内存消耗），仅在智能模式下唤醒"; divider: false;
+                                FluentSwitch { checked: Settings.ai-lazy; toggled(v) => { Settings.set-bool("ai_lazy_load", v); } } }
+                        }
+                        Group {
+                            title: "语义意图理解";
+                            Row { label: "自然语言时间与类型解析"; desc: "智能识别「昨天」「上周」「代码」「文档」并自动转为结构化过滤";
+                                FluentSwitch { checked: Settings.ai-intent; toggled(v) => { Settings.set-bool("ai_intent_parsing", v); } } }
+                            Row { label: "本地推理后端"; desc: "当前：规则意图解析 + FTS5 正文检索 · 零网络请求"; divider: false;
+                                Badge { text: "● 就绪"; tint: #6ee7b7; } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 右上角悬浮关闭（设计稿 .settings-modal-close-btn：
+    //   top 14 / right 16 / 28×28 / radius 6px / color rgba(255,255,255,0.6)
+    //   hover: bg 0.09 + border 0.12 + color #fff）
+    Rectangle {
+        x: parent.width - 44px; y: 14px; width: 28px; height: 28px; border-radius: 6px;
+        background: cta.has-hover ? (Theme.dark ? #ffffff17 : #00000017) : transparent;
+        Icon {
+            name: "x"; size: 14px;
+            tint: cta.has-hover ? Theme.text-primary : (Theme.dark ? #ffffff99 : #00000099);
+            x: 7px; y: 7px;
+        }
+        cta := TouchArea { mouse-cursor: pointer; clicked => { root.close(); } }
+    }
+}

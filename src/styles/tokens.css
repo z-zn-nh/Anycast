@@ -1,0 +1,159 @@
+/**
+ * Anycast Design System - Design Tokens (Refined & Minimal)
+ * Windows 11 Fluent / Raycast / Linear Minimal Aesthetics
+ */
+
+:root {
+  /* Color Palette - Dark Acrylic (Calibrated for High Legibility & Frosted Glass) */
+  --bg-app: #0c0d11;
+  --acrylic-bg: rgba(20, 23, 31, 0.72);
+  --acrylic-bg-subtle: rgba(255, 255, 255, 0.04);
+  --acrylic-bg-hover: rgba(255, 255, 255, 0.08);
+  --acrylic-bg-active: rgba(255, 255, 255, 0.12);
+  --acrylic-bg-selected: rgba(255, 255, 255, 0.10);
+  
+  /* Borders - Subtle & Minimal (Zero heavy lines) */
+  --acrylic-border: rgba(255, 255, 255, 0.12);
+  --acrylic-border-subtle: rgba(255, 255, 255, 0.06);
+  --acrylic-border-highlight: rgba(255, 255, 255, 0.22);
+  
+  /* Surfaces */
+  --surface-glass: rgba(255, 255, 255, 0.04);
+  --surface-glass-border: rgba(255, 255, 255, 0.08);
+  --surface-card: rgba(28, 30, 38, 0.6);
+  --surface-card-hover: rgba(35, 38, 48, 0.75);
+  --surface-popover: rgba(20, 23, 30, 0.96);
+
+  /* Typography Colors - High Contrast for Acrylic Frosted Surfaces */
+  --text-primary: #ffffff;
+  --text-secondary: #e2e8f0;
+  --text-tertiary: #94a3b8;
+  --text-muted: #64748b;
+  --text-disabled: #475569;
+  --text-placeholder: rgba(255, 255, 255, 0.50);
+  --text-inverse: #0f172a;
+
+  /* Accent Colors - Clean, Zero Exaggerated Glow */
+  --accent-primary: #3b82f6;
+  --accent-primary-hover: #60a5fa;
+  --accent-subtle: rgba(59, 130, 246, 0.16);
+
+  /* AI Semantic Color - Clean Violet */
+  --ai-primary: #8b5cf6;
+  --ai-primary-hover: #a78bfa;
+  --ai-subtle: rgba(139, 92, 246, 0.16);
+
+  /* Functional Colors */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #06b6d4;
+
+  /* Clean Elevation Shadow & Specular Rim Light */
+  --shadow-window: 
+    0 0 0 1px var(--acrylic-border),
+    0 24px 54px rgba(0, 0, 0, 0.52),
+    inset 0 1px 1px rgba(255, 255, 255, 0.20);
+  --shadow-popover: 
+    0 0 0 1px var(--acrylic-border-highlight),
+    0 14px 32px rgba(0, 0, 0, 0.42),
+    inset 0 1px 1px rgba(255, 255, 255, 0.16);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.20);
+
+  /* Blur & Filters (Enhanced for authentic Windows 11 Acrylic refraction) */
+  --blur-acrylic: blur(30px) saturate(190%) contrast(105%);
+  --blur-glass: blur(16px);
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 20px;
+
+  /* Border Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-full: 9999px;
+
+  /* Typography Scale */
+  --font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+  
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+
+  /* Transitions */
+  --transition-fast: 100ms ease;
+  --transition-normal: 180ms ease;
+}
+
+/* Light Theme Variables */
+[data-theme="light"] {
+  --bg-app: #e4e7eb;
+  --acrylic-bg: rgba(252, 253, 255, 0.78);
+  --acrylic-bg-subtle: rgba(0, 0, 0, 0.03);
+  --acrylic-bg-hover: rgba(0, 0, 0, 0.05);
+  --acrylic-bg-active: rgba(0, 0, 0, 0.08);
+  --acrylic-bg-selected: rgba(0, 0, 0, 0.06);
+
+  --acrylic-border: rgba(0, 0, 0, 0.12);
+  --acrylic-border-subtle: rgba(0, 0, 0, 0.06);
+  --acrylic-border-highlight: rgba(0, 0, 0, 0.18);
+
+  --surface-glass: rgba(255, 255, 255, 0.7);
+  --surface-glass-border: rgba(0, 0, 0, 0.06);
+  --surface-card: rgba(255, 255, 255, 0.9);
+  --surface-card-hover: rgba(255, 255, 255, 1);
+  --surface-popover: rgba(255, 255, 255, 0.98);
+
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-tertiary: #64748b;
+  --text-muted: #94a3b8;
+  --text-disabled: #cbd5e1;
+  --text-placeholder: rgba(15, 23, 42, 0.48);
+  --text-inverse: #ffffff;
+
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-subtle: rgba(37, 99, 235, 0.08);
+
+  --ai-primary: #7c3aed;
+  --ai-primary-hover: #6d28d9;
+  --ai-subtle: rgba(124, 58, 237, 0.08);
+
+  --shadow-window: 
+    0 0 0 1px var(--acrylic-border),
+    0 24px 54px rgba(0, 0, 0, 0.16),
+    inset 0 1px 1px rgba(255, 255, 255, 0.9);
+  --shadow-popover: 
+    0 0 0 1px var(--acrylic-border-highlight),
+    0 14px 32px rgba(0, 0, 0, 0.12),
+    inset 0 1px 1px rgba(255, 255, 255, 0.7);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Acrylic Opacity Preset Modifiers */
+[data-acrylic-opacity="high"] {
+  --acrylic-bg: rgba(18, 21, 30, 0.58) !important;
+}
+
+[data-theme="light"][data-acrylic-opacity="high"] {
+  --acrylic-bg: rgba(250, 252, 255, 0.62) !important;
+}
+
+[data-acrylic-opacity="solid"] {
+  --acrylic-bg: rgba(20, 23, 31, 0.86) !important;
+}
+
+[data-theme="light"][data-acrylic-opacity="solid"] {
+  --acrylic-bg: rgba(252, 253, 255, 0.90) !important;
+}

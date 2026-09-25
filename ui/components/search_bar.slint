@@ -1,0 +1,107 @@
+// 搜索输入栏：放大镜前缀 + 输入 + 清除 + 纯图标筛选开关（空心/实心漏斗切换）
+import { Theme } from "../styles/tokens.slint";
+import { Icon } from "widgets.slint";
+
+export component SearchBar inherits Rectangle {
+    in-out property <string> text;
+    in property <string> mode: "fast";
+    in property <bool> filter-open: false;
+    in property <bool> filter-active: false;
+    callback edited(string);
+    callback accepted();
+    callback clear();
+    callback toggle-filter();
+    public function take-focus() { input.focus(); }
+    public function select-all() { input.select-all(); }
+
+    // 对齐设计稿 HTML（src/styles/components.css .search-bar-wrapper）：
+    //   height 52px / padding 0 16px / gap 12px / 无边框无分割线
+    height: 52px;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        Icon {
+            name: root.mode == "smart" ? "sparkles" : "search";
+            size: 16px;
+            // 设计稿 .search-icon-prefix: rgba(255,255,255,0.45) / 浅色 rgba(0,0,0,0.45)
+            tint: root.mode == "smart"
+                ? #c4b5fd
+                : (Theme.dark ? #ffffff73 : #00000073);
+            y: (root.height - self.height) / 2;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            clip: true;
+            if root.text == "" && input.preedit-text == "" : Text {
+                x: 0px;
+                text: root.mode == "smart" ? "智能搜索：支持自然语言、语义理解与意图识别……" : "搜索应用、文件、剪贴板……";
+                color: Theme.text-placeholder;
+                font-size: 14px;
+                vertical-alignment: center;
+                height: root.height;
+            }
+            input := TextInput {
+                width: parent.width;
+                height: root.height;
+                text <=> root.text;
+                font-size: 14px;
+                font-weight: 450;
+                color: Theme.text-primary;
+                single-line: true;
+                vertical-alignment: center;
+                selection-background-color: #3b82f680;
+                text-cursor-width: 1.5px;
+                edited => { root.edited(self.text); }
+                accepted => { root.accepted(); }
+            }
+            TouchArea {
+                mouse-cursor: MouseCursor.text;
+                clicked => { input.focus(); }
+            }
+        }
+        // 清除按钮：设计稿 .search-clear-btn 为 18×18 正圆
+        //   常态底色 var(--acrylic-bg-hover)：深色 rgba(255,255,255,0.08) / 浅色 rgba(0,0,0,0.05)
+        //   悬停底色 var(--acrylic-bg-active)：深色 rgba(255,255,255,0.12) / 浅色 rgba(0,0,0,0.08)
+        //   图标色 var(--text-tertiary) → 悬停 var(--text-primary)
+        if root.text != "" : Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (root.height - self.height) / 2;
+            border-radius: 9px;
+            background: cta.has-hover
+                ? (Theme.dark ? #ffffff1f : #00000014)
+                : (Theme.dark ? #ffffff14 : #0000000d);
+            animate background { duration: Theme.fast; }
+            Icon {
+                name: "x";
+                size: 11px;
+                tint: cta.has-hover ? Theme.text-primary : Theme.text-tertiary;
+                x: 3.5px;
+                y: 3.5px;
+            }
+            cta := TouchArea { mouse-cursor: pointer; clicked => { root.clear(); } }
+        }
+        // 纯图标筛选按钮：无底色、无边框（设计稿 .search-filter-icon-btn）
+        //   normal: rgba(255,255,255,0.45)  hover: rgba(255,255,255,0.95)
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            y: (root.height - self.height) / 2;
+            background: transparent;
+            Icon {
+                name: (root.filter-open || root.filter-active) ? "filterSolid" : "filter";
+                size: 15px;
+                tint: (root.filter-open || root.filter-active)
+                    ? Theme.text-primary
+                    : (fta.has-hover
+                        ? (Theme.dark ? #fffffff2 : #000000)
+                        : (Theme.dark ? #ffffff73 : #00000073));
+                x: 6.5px;
+                y: 6.5px;
+            }
+            fta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-filter(); } }
+        }
+    }
+}

@@ -1,0 +1,282 @@
+/**
+ * Anycast Design System - Acrylic & Desktop Simulation (Refined)
+ * Realistic Windows 11 Wallpapers, Desktop Canvas, Draggable Acrylic Testing
+ */
+
+/* Base Reset & Universal Scrollbar Removal */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+*::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  background-color: var(--bg-app);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  user-select: none;
+}
+
+/* Desktop Simulation Canvas */
+.desktop-canvas {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: background-image 0.3s ease, background-color 0.3s ease;
+  overflow: hidden;
+}
+
+/* Rich Real Image Wallpapers - High Resolution Windows 11 & Landscape Assets */
+.desktop-canvas[data-wallpaper="user-current"] {
+  background-image: url("../assets/wallpapers/user-current.jpg");
+  background-color: #0b111e;
+}
+
+.desktop-canvas[data-wallpaper="bloom-dark"] {
+  background-image: url("../assets/wallpapers/bloom-dark.jpg");
+  background-color: #0b111e;
+}
+
+.desktop-canvas[data-wallpaper="bloom-light"] {
+  background-image: url("../assets/wallpapers/bloom-light.jpg");
+  background-color: #f1f5f9;
+}
+
+.desktop-canvas[data-wallpaper="nature-spotlight"] {
+  background-image: url("../assets/wallpapers/nature-spotlight.jpg");
+  background-color: #1e293b;
+}
+
+.desktop-canvas[data-wallpaper="motion"] {
+  background-image: url("../assets/wallpapers/motion.jpg");
+  background-color: #140b24;
+}
+
+.desktop-canvas[data-wallpaper="sunrise"] {
+  background-image: url("../assets/wallpapers/sunrise.jpg");
+  background-color: #2a1b18;
+}
+
+/* Simulated Desktop Icons Grid on left */
+.desktop-icons-grid {
+  position: absolute;
+  top: 68px;
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.desktop-icon-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 72px;
+  text-align: center;
+}
+
+.desktop-icon-thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #60a5fa;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.desktop-icon-thumb svg {
+  width: 22px;
+  height: 22px;
+}
+
+.desktop-icon-label {
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  font-weight: 500;
+}
+
+/* Simulated Windows 11 Bottom Taskbar */
+.desktop-taskbar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: rgba(18, 20, 26, 0.82);
+  backdrop-filter: blur(24px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.taskbar-center-icons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.taskbar-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+}
+
+.taskbar-icon.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #60a5fa;
+  position: relative;
+}
+
+.taskbar-icon.active::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  width: 14px;
+  height: 2.5px;
+  background: #3b82f6;
+  border-radius: 2px;
+}
+
+/* Acrylic Surface Component - Clean, Translucent, Seamless */
+.acrylic-surface {
+  position: relative;
+  background-color: var(--acrylic-bg);
+  backdrop-filter: var(--blur-acrylic);
+  -webkit-backdrop-filter: var(--blur-acrylic);
+  border: 1px solid var(--acrylic-border);
+  box-shadow: var(--shadow-window);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Glass Surface for internal cards */
+.glass-surface {
+  background-color: var(--surface-glass);
+  backdrop-filter: var(--blur-glass);
+  -webkit-backdrop-filter: var(--blur-glass);
+  border: 1px solid var(--surface-glass-border);
+  border-radius: var(--radius-sm);
+}
+
+/* Top Showcase Bar - Strict Alignment, Zero Extraneous Dividers */
+.showcase-header {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  height: 44px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 100;
+  padding: 0 14px;
+  background-color: var(--surface-popover);
+  border: 1px solid var(--acrylic-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.brand-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  letter-spacing: -0.2px;
+  line-height: 1;
+}
+
+.brand-logo {
+  width: 20px;
+  height: 20px;
+  background: var(--accent-primary);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+}
+
+.brand-sub {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  font-weight: 400;
+  margin-left: 2px;
+  padding: 2px 6px;
+  background: var(--acrylic-bg-hover);
+  border-radius: var(--radius-xs);
+}
+
+.showcase-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.control-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--acrylic-bg-hover);
+  border: 1px solid var(--acrylic-border);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  line-height: 26px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.control-btn:hover {
+  background: var(--acrylic-bg-active);
+  color: var(--text-primary);
+}
+
+.control-btn.active {
+  background: var(--accent-subtle);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  font-weight: 500;
+}

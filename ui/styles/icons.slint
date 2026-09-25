@@ -1,0 +1,114 @@
+// 图标集中声明：SVG 资源编译期内嵌，运行时按名称选取
+export global Icons {
+    out property <image> search: @image-url("../icons/search.svg");
+    out property <image> sparkles: @image-url("../icons/sparkles.svg");
+    out property <image> lightning: @image-url("../icons/lightning.svg");
+    out property <image> folder: @image-url("../icons/folder.svg");
+    out property <image> folder-open: @image-url("../icons/folderOpen.svg");
+    out property <image> file-text: @image-url("../icons/fileText.svg");
+    out property <image> file-code: @image-url("../icons/fileCode.svg");
+    out property <image> file: @image-url("../icons/file.svg");
+    out property <image> image: @image-url("../icons/image.svg");
+    out property <image> media: @image-url("../icons/media.svg");
+    out property <image> archive: @image-url("../icons/archive.svg");
+    out property <image> app: @image-url("../icons/app.svg");
+    out property <image> terminal: @image-url("../icons/terminal.svg");
+    out property <image> clipboard: @image-url("../icons/clipboard.svg");
+    out property <image> link: @image-url("../icons/link.svg");
+    out property <image> globe: @image-url("../icons/globe.svg");
+    out property <image> vscode: @image-url("../icons/vscode.svg");
+    out property <image> docker: @image-url("../icons/docker.svg");
+    out property <image> pin: @image-url("../icons/pin.svg");
+    out property <image> clock: @image-url("../icons/clock.svg");
+    out property <image> settings: @image-url("../icons/settings.svg");
+    out property <image> copy: @image-url("../icons/copy.svg");
+    out property <image> external-link: @image-url("../icons/externalLink.svg");
+    out property <image> chevron-down: @image-url("../icons/chevronDown.svg");
+    out property <image> chevron-up: @image-url("../icons/chevronUp.svg");
+    out property <image> chevron-right: @image-url("../icons/chevronRight.svg");
+    out property <image> chevron-left: @image-url("../icons/chevronLeft.svg");
+    out property <image> x: @image-url("../icons/x.svg");
+    out property <image> check: @image-url("../icons/check.svg");
+    out property <image> filter: @image-url("../icons/filter.svg");
+    out property <image> filter-solid: @image-url("../icons/filterSolid.svg");
+    out property <image> list: @image-url("../icons/list.svg");
+    out property <image> grid: @image-url("../icons/grid.svg");
+    out property <image> play: @image-url("../icons/play.svg");
+    out property <image> trash: @image-url("../icons/trash.svg");
+    out property <image> plus: @image-url("../icons/plus.svg");
+    out property <image> keyboard: @image-url("../icons/keyboard.svg");
+    out property <image> palette: @image-url("../icons/palette.svg");
+    out property <image> database: @image-url("../icons/database.svg");
+    out property <image> layers: @image-url("../icons/layers.svg");
+    out property <image> text-lines: @image-url("../icons/textLines.svg");
+    out property <image> code: @image-url("../icons/code.svg");
+    out property <image> reset: @image-url("../icons/reset.svg");
+    out property <image> drive: @image-url("../icons/drive.svg");
+    out property <image> desktop: @image-url("../icons/desktop.svg");
+    out property <image> download: @image-url("../icons/download.svg");
+    out property <image> sun: @image-url("../icons/sun.svg");
+    out property <image> moon: @image-url("../icons/moon.svg");
+    out property <image> eye: @image-url("../icons/eye.svg");
+    out property <image> info: @image-url("../icons/info.svg");
+    out property <image> alert: @image-url("../icons/alert.svg");
+    out property <image> power: @image-url("../icons/power.svg");
+    out property <image> tray: @image-url("../icons/tray.svg");
+
+    public pure function pick(name: string) -> image {
+        if (name == "search") { return search; }
+        if (name == "sparkles") { return sparkles; }
+        if (name == "lightning") { return lightning; }
+        if (name == "folder") { return folder; }
+        if (name == "folderOpen") { return folder-open; }
+        if (name == "fileText") { return file-text; }
+        if (name == "fileCode") { return file-code; }
+        if (name == "file") { return file; }
+        if (name == "image") { return image; }
+        if (name == "media") { return media; }
+        if (name == "archive") { return archive; }
+        if (name == "terminal") { return terminal; }
+        if (name == "clipboard") { return clipboard; }
+        if (name == "link") { return link; }
+        if (name == "globe") { return globe; }
+        if (name == "vscode") { return vscode; }
+        if (name == "docker") { return docker; }
+        if (name == "pin") { return pin; }
+        if (name == "clock") { return clock; }
+        if (name == "settings") { return settings; }
+        if (name == "copy") { return copy; }
+        if (name == "externalLink") { return external-link; }
+        if (name == "check") { return check; }
+        if (name == "x") { return x; }
+        if (name == "play") { return play; }
+        if (name == "trash") { return trash; }
+        if (name == "keyboard") { return keyboard; }
+        if (name == "database") { return database; }
+        if (name == "layers") { return layers; }
+        if (name == "info") { return info; }
+        if (name == "alert") { return alert; }
+        if (name == "list") { return list; }
+        if (name == "grid") { return grid; }
+        if (name == "filter") { return filter; }
+        if (name == "eye") { return eye; }
+        if (name == "sun") { return sun; }
+        if (name == "moon") { return moon; }
+        if (name == "drive") { return drive; }
+        if (name == "desktop") { return desktop; }
+        if (name == "download") { return download; }
+        if (name == "reset") { return reset; }
+        if (name == "plus") { return plus; }
+        // —— 以下为补全项：此前遗漏导致 pick() 落空并 fallback 成 app 四宫格方块 ——
+        if (name == "app") { return app; }
+        if (name == "chevronDown") { return chevron-down; }
+        if (name == "chevronUp") { return chevron-up; }
+        if (name == "chevronRight") { return chevron-right; }
+        if (name == "chevronLeft") { return chevron-left; }
+        if (name == "filterSolid") { return filter-solid; }
+        if (name == "textLines") { return text-lines; }
+        if (name == "code") { return code; }
+        if (name == "palette") { return palette; }
+        if (name == "power") { return power; }
+        if (name == "tray") { return tray; }
+        return app;
+    }
+}

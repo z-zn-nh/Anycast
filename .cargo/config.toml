@@ -1,0 +1,95 @@
+# Anycast 构建配置
+#
+# ─── 为什么需要限制并发 ─────────────────────────────────────────────
+# 本机 24 逻辑核心 / 32GB 物理内存。cargo 默认按核心数并发启动 24 个 rustc，
+# 而 Slint 依赖链（skia / icu / windows-sys）单个 rustc 的 LLVM 峰值内存很高，
+# 并发打满时会瞬间耗尽内存，实测报错：
+#     rustc-LLVM ERROR: out of memory
+#     memory allocation of 524288 bytes failed
+#
+# OOM 崩溃的连带伤害（排查时极易被误导）：
+#   崩溃的 rustc 会在 target/ 留下残缺的中间产物，后续编译随即报出大量
+#   与真实原因无关的虚假错误，典型如：
+#       only metadata stub found for `rlib` dependency `core`
+#       can't find crate for `std`
+#       cannot find macro `println` in this scope
+#   → 遇到这类"std 找不到 / 宏找不到"的错误，先 rm -rf target 重编，
+#     不要把方向对准标准库或工具链。
+#
+# ─── jobs 取值 ─────────────────────────────────────────────────────
+# 实测 j=24 必崩，j=8 仍会在 hashbrown / windows-sys 处 OOM，
+# j=2 可稳定编完。若编译期间机器空闲内存 >16GB，可调到 4~6 提速。
+
+# ─── ⚠️ 2026-09-24 修订：真正的约束是「提交限制」，不是并发数 ──────────
+#
+# 上面那套「并发数 × 单 rustc 峰值」的说法**只是表象**。实测证据：
+#
+#   物理内存      31.74 GB 总 / 9.9 GB **可用**（看着很宽裕）
+#   提交上限      39.74 GB
+#   已提交        37.0 GB
+#   剩余提交余量  **仅 2.4 GB**          ← rustc 撞的是这堵墙
+#   历史峰值      39.74 GB（正好等于上限，说明已用满过一次）
+#
+# Windows 上每个进程的私有内存都要向系统"提交"，上限 = 物理内存 + 页面文件。
+# 提交量耗尽时，哪怕物理内存空着 10GB，分配照样失败 —— 这就是
+# 「明明还有内存却报 memory allocation of 524288 bytes failed」的原因。
+# 也解释了为什么这个 OOM **时好时坏**：余量随机器上其他程序浮动。
+#
+# 提交量大户（按 PagefileUsage，非工作集）：qemu-system-x86_64 4.5GB、
+# explorer 1.6GB、QQ×3 共 2.2GB、内核 2.71GB。
+#
+# 本机页面文件配置有坑：注册表 `PagingFiles` 写着
+#     ['C:\pagefile.sys 4096 8192', 'D:\pagefile.sys 49152 49152']
+# 但 **D:\pagefile.sys 根本不存在**（D 盘还有 144GB 空闲），
+# 而 `ExistingPageFiles` 却把它列了出来（该值会骗人）。
+# 本该有 ~87GB 提交上限，实际只有 39.74GB。修好它这类 OOM 才会永久消失。
+#
+# ─── 只差最后那个巨型 bin crate 时，jobs 已经不管用了 ────────────────
+#
+# 依赖全部编好、只剩 `anycast` bin crate 时，瓶颈是**单个 rustc 自己的峰值**
+# （实测约 1.9~2.2 GB），此时 jobs 无意义。有效手段按性价比排序：
+#
+#   1. `cargo build -j 1`                          ← 决定性，且**单独就够**
+#      jobs=2 时 rustc 从 jobserver 拿 2 个令牌 → 最多 2 个 LLVM 上下文同时驻留；
+#      -j 1 压到 1 个，峰值刚好塞进余量。
+#      ✅ 实测：原配置（opt-level=1 / debug=2）+ `CARGO_INCREMENTAL=0 cargo build -j 1`
+#         → Finished in 3m31s，**无需任何 profile 覆盖**。这是首选命令。
+#      （对照：不加 -j 1 时，jobs=2 + debug=0 + opt-level=0 仍然 OOM）
+#   2. --config 'profile.dev.package.anycast.opt-level=0'   峰值 2.19GB → 1.87GB
+#      仅在 -j 1 仍不够时的备选；按包覆盖**不会**牵连 299 个依赖重编（rlib 时间戳可验证）
+#   3. --config 'profile.dev.package.anycast.debug=0'       **基本无效**（2.15→2.19GB）
+#   4. CARGO_INCREMENTAL=0                                  略有帮助，不牵连依赖
+#
+# ─── 日常推荐命令 ───────────────────────────────────────────────────
+#     cargo build                     ← jobs 已在下方 [build] 固化为 1，直接敲即可
+#     CARGO_INCREMENTAL=0 cargo build -j 1   ← 等价写法，保留作为参考
+#   （页面文件修好后可把 [build] jobs 改回 2~6 恢复全速）
+#
+# ─── OOM 崩溃的连带假错误（排查时极易被误导）───────────────────────
+#
+# 崩溃的 rustc 会在 target/ 留下残缺产物，后续编译报出大量与真实原因无关的
+# 虚假错误，典型两类：
+#   ① only metadata stub found for `rlib` dependency `core`
+#      can't find crate for `std` / cannot find macro `println`
+#      → 先 rm -rf target 重编，不要把方向对准标准库或工具链。
+#   ② LNK2019 无法解析的外部符号 × N + LNK1120: N 个无法解析的外部命令
+#      → 增量缓存声称这些 CGU 是新的，但目标文件没写全。
+#        **只删 target/debug/incremental 即可**（实测 1.0GB），不必全量重编。
+#
+# 量提交量的命令与完整诊断见 skill：rust-cargo-oom-false-errors
+# 量编译峰值的探针见：tools/build_mem_probe.py
+
+[build]
+# ─── 2026-09-24：由 2 下调为 1 ──────────────────────────────────────
+# 依据：本机 D:\pagefile.sys 未修好，提交余量仅约 2.4~5.7GB；jobs=2 时两个 rustc
+# 的 LLVM 上下文同时驻留仍会撞提交上限（实测 jobs=2 + debug=0 + opt-level=0 照样 OOM）。
+# 压到 1 实测稳定编完（6m42s）。这样**裸敲 `cargo build` 也是安全的**，
+# 不必每次都记得手敲 -j 1。
+#
+# ⚠️ D:\pagefile.sys 修好后（提交上限 39.74GB → ~87GB），把这里改回 2~6 提速；
+#    实测 24 必崩、8 仍会在 hashbrown / windows-sys 处 OOM。
+#
+# ✅ 2026-09-24 实测确认：裸 `CARGO_INCREMENTAL=0 cargo build`（**不带 -j**）
+#    → Finished in 2m49s，无 OOM。证明 `[build] jobs` 与命令行 `-j 1` 在本项目
+#    **等效**（此前怀疑"两者不完全等价"，已排除）。所以日常直接 `cargo build` 即可。
+jobs = 1

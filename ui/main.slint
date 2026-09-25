@@ -1,0 +1,369 @@
+// Anycast 主窗口：无边框、透明底、居中浮动亚克力搜索面板
+import { Theme } from "styles/tokens.slint";
+import { Icons } from "styles/icons.slint";
+import { Icon, GhostButton } from "components/widgets.slint";
+import { SearchBar } from "components/search_bar.slint";
+import { PinnedShelf } from "components/pinned_shelf.slint";
+import { CategoryBar } from "components/category_bar.slint";
+import { ResultPane } from "components/result_list.slint";
+import { ContextMenu, Toast } from "components/context_menu.slint";
+import { FilterShelf, CalendarPopover, TypePopover, LocationPopover } from "components/filter_shelf.slint";
+import { SettingsModal, Settings } from "components/settings_modal.slint";
+import { ResultItem, ResultRow, GridSection, HotkeyBinding, IntentChip, CalDay, LocationEntry, SelectOption } from "components/types.slint";
+
+export { Theme, Settings }
+export { ResultItem, ResultRow, GridSection, HotkeyBinding, IntentChip, CalDay, LocationEntry, SelectOption }
+
+export component TrayIcon inherits SystemTrayIcon {
+    icon: Icons.tray;
+    tooltip: "Anycast — 本地统一入口";
+    callback open;
+    callback open-settings;
+    callback quit;
+    clicked => { root.open(); }
+    Menu {
+        MenuItem { title: "打开 Anycast"; activated => { root.open(); } }
+        MenuItem { title: "偏好设置…"; activated => { root.open-settings(); } }
+        MenuSeparator { }
+        MenuItem { title: "退出"; activated => { root.quit(); } }
+    }
+}
+
+export component AppWindow inherits Window {
+    no-frame: true;
+    background: transparent;
+    always-on-top: true;
+    title: "Anycast";
+    icon: Icons.tray;
+    default-font-family: Theme.font;
+    default-font-size: 13px;
+    preferred-width: 860px;
+    preferred-height: 560px;
+    min-width: 720px;
+    min-height: 480px;
+    resize-border-width: 6px;
+
+    // -------------------- 状态 --------------------
+    in-out property <string> query;
+    in-out property <string> mode: "fast";
+    in property <[ResultRow]> rows: [];
+    in property <[ResultItem]> items: [];
+    in property <[GridSection]> sections: [];
+    in property <int> selected: 0;
+    in property <length> selected-y: 0px;
+    in property <length> selected-h: 42px;
+    in property <[ResultItem]> pinned: [];
+    in-out property <bool> pinned-collapsed: false;
+    in property <int> pinned-selected: -1;
+    in property <string> category: "all";
+    in property <string> clip-sub: "all";
+    in property <string> view-mode: "list";
+    in property <string> status-text: "";
+    // 筛选
+    in-out property <bool> filter-open: false;
+    in-out property <string> open-menu: "";
+    in property <string> time-label: "时间";
+    in property <string> type-label: "类型";
+    in property <string> location-label: "位置";
+    in property <bool> time-active: false;
+    in property <bool> type-active: false;
+    in property <bool> location-active: false;
+    in property <string> time-preset: "all";
+    in property <string> type-value: "all";
+    in property <string> location-value: "all";
+    in property <[LocationEntry]> locations: [];
+    in property <string> cal-title: "";
+    in property <[CalDay]> cal-days: [];
+    in property <string> cal-summary: "点击选择起止日期范围";
+    in property <bool> cal-can-apply: false;
+    // AI 意图
+    in property <[IntentChip]> chips: [];
+    // 右键菜单
+    in-out property <bool> ctx-visible: false;
+    in property <length> ctx-x: 0px;
+    in property <length> ctx-y: 0px;
+    in property <string> ctx-open-label: "立即打开";
+    in property <string> ctx-pin-label: "固定到置顶";
+    in property <string> ctx-enter-label: "进入此文件夹查找";
+    in property <bool> ctx-is-folder: false;
+    in property <bool> ctx-has-path: true;
+    // Toast
+    in property <string> toast-text: "";
+    in property <string> toast-icon: "check";
+    in property <bool> toast-shown: false;
+    // 设置
+    in-out property <bool> settings-visible: false;
+
+    // -------------------- 回调 --------------------
+    callback query-changed(string);
+    callback submit;
+    callback key-pressed(string, bool, bool, bool, bool) -> bool;
+    callback select(int);
+    callback activate(int);
+    callback context(int, length, length);
+    callback pinned-select(int);
+    callback pinned-activate(int);
+    callback pinned-context(int, length, length);
+    callback toggle-pinned;
+    callback set-category(string);
+    callback set-clip-sub(string);
+    callback toggle-view;
+    callback toggle-mode;
+    callback toggle-filter;
+    callback ctx-action(string);
+    callback open-group(string);
+    callback clear-group(string);
+    callback reset-filters;
+    callback time-preset-picked(string);
+    callback cal-prev;
+    callback cal-next;
+    callback cal-day(string);
+    callback cal-hover(string);
+    callback cal-clear;
+    callback cal-apply;
+    callback pick-type(string);
+    callback pick-location(string, string, string);
+    callback custom-location(string);
+    callback browse-folder;
+    callback open-settings;
+    callback close-settings;
+    callback hide-window;
+
+    public function focus-search() { bar.take-focus(); }
+    public function focus-root() { root-focus.focus(); }
+    public function ensure-visible() { pane.ensure-visible(); }
+    public function scroll-top() { pane.scroll-top(); }
+    public function focus-location-box() { loc-pop.take-focus(); }
+    out property <int> grid-cols: pane.grid-cols;
+
+    root-focus := FocusScope {
+        capture-key-pressed(ev) => {
+            if (root.key-pressed(ev.text, ev.modifiers.control, ev.modifiers.alt, ev.modifiers.shift, ev.modifiers.meta)) {
+                return accept;
+            }
+            return reject;
+        }
+        key-pressed(ev) => {
+            if (root.key-pressed(ev.text, ev.modifiers.control, ev.modifiers.alt, ev.modifiers.shift, ev.modifiers.meta)) {
+                return accept;
+            }
+            return reject;
+        }
+
+        // ── 外围微晶边框（设计稿 65.4「窗体高光与边界」）──
+        // 原实现仅靠 surface 自身 1px 边框，缺少设计稿要求的
+        // 「外围 1px 微晶半透边框 + 柔和深邃微投影」。
+        // 软件渲染器不支持 box-shadow / drop-shadow，故用一层
+        // 向外错位 1px 的描边矩形模拟抛光玻璃倒角。
+        // 注意：必须放在 surface 之外（surface 有 clip: true 会裁掉外扩部分）。
+        if Theme.rim-light : Rectangle {
+            x: surface.x - 1px;
+            y: surface.y - 1px;
+            width: surface.width + 2px;
+            height: surface.height + 2px;
+            border-radius: 15px;
+            border-width: 1px;
+            border-color: Theme.border-highlight;
+            background: transparent;
+        }
+
+        surface := Rectangle {
+            border-radius: 14px;
+            background: Theme.acrylic-bg;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+
+            // 上沿高光（Specular Rim Light）
+            if Theme.rim-light : Rectangle {
+                y: 1px; x: 14px; width: parent.width - 28px; height: 1px;
+                background: Theme.dark ? #ffffff33 : #ffffffe6;
+            }
+
+            VerticalLayout {
+                spacing: 0px;
+                bar := SearchBar {
+                    text <=> root.query;
+                    mode: root.mode;
+                    filter-open: root.filter-open;
+                    filter-active: root.time-active || root.type-active || root.location-active;
+                    edited(t) => { root.query-changed(t); }
+                    accepted => { root.submit(); }
+                    clear => { root.query = ""; root.query-changed(""); bar.take-focus(); }
+                    toggle-filter => { root.toggle-filter(); }
+                }
+                shelf := FilterShelf {
+                    open: root.filter-open;
+                    time-label: root.time-label;
+                    type-label: root.type-label;
+                    location-label: root.location-label;
+                    time-active: root.time-active;
+                    type-active: root.type-active;
+                    location-active: root.location-active;
+                    open-menu: root.open-menu;
+                    open-group(g) => { root.open-group(g); }
+                    clear-group(g) => { root.clear-group(g); }
+                    reset => { root.reset-filters(); }
+                }
+                // AI 意图解析条
+                if root.mode == "smart" && root.query != "" && root.chips.length > 0 : Rectangle {
+                    height: 30px;
+                    HorizontalLayout {
+                        padding-left: 16px; padding-right: 16px; spacing: 6px; alignment: start;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Icon { name: "sparkles"; size: 12px; tint: #c4b5fd; y: 9px; }
+                            Text { text: "意图解析:"; font-size: 11px; color: #c4b5fd; vertical-alignment: center; }
+                        }
+                        for c in root.chips : Rectangle {
+                            height: 22px; width: ct.preferred-width + 16px; y: 4px;
+                            border-radius: 5px; background: Theme.ai-soft;
+                            ct := HorizontalLayout {
+                                x: 8px; spacing: 4px; alignment: center;
+                                Text { text: c.key + ":"; font-size: 11px; color: #c4b5fd; vertical-alignment: center; }
+                                Text { text: c.val; font-size: 11px; font-weight: 600; color: Theme.text-primary; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                }
+                pins := PinnedShelf {
+                    items: root.pinned;
+                    collapsed: root.pinned-collapsed;
+                    selected: root.pinned-selected;
+                    toggle => { root.toggle-pinned(); }
+                    select(i) => { root.pinned-select(i); }
+                    activate(i) => { root.pinned-activate(i); }
+                    context(i, x, y) => { root.pinned-context(i, x, y); }
+                }
+                CategoryBar {
+                    category: root.category;
+                    clip-sub: root.clip-sub;
+                    set-category(c) => { root.set-category(c); }
+                    set-clip-sub(s) => { root.set-clip-sub(s); }
+                }
+                pane := ResultPane {
+                    vertical-stretch: 1;
+                    rows: root.rows;
+                    items: root.items;
+                    sections: root.sections;
+                    view-mode: root.view-mode;
+                    selected: root.selected;
+                    selected-y: root.selected-y;
+                    selected-h: root.selected-h;
+                    query: root.query;
+                    smart: root.mode == "smart" && root.query != "";
+                    select(i) => { root.select(i); }
+                    activate(i) => { root.activate(i); }
+                    context(i, x, y) => { root.context(i, x, y); }
+                }
+                // 底栏（对齐设计稿 .palette-footer）
+                //   容器：38px 高 / padding 0 16px / 无分割线 / 透明底
+                //   左侧按钮组 gap 6px；.footer-btn：24px 高 / radius 4px / gap 5px /
+                //   font-size 11.5px / padding 0 8px
+                //   设计稿给首个子元素注入 margin-left: -4px，此处以 padding-left 12px
+                //   (= 16 - 4) 等效，使首个按钮左边缘落在 12px。
+                Rectangle {
+                    height: 38px;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 16px; spacing: 6px;
+                        GhostButton {
+                            icon: root.view-mode == "grid" ? "list" : "grid";
+                            label: root.view-mode == "grid" ? "列表" : "图标";
+                            btn-height: 24px; btn-radius: 4px; gap: 5px; font-size: 11.5px;
+                            y: 7px;
+                            clicked => { root.toggle-view(); }
+                        }
+                        GhostButton {
+                            icon: "settings"; label: "设置";
+                            btn-height: 24px; btn-radius: 4px; gap: 5px; font-size: 11.5px;
+                            y: 7px;
+                            clicked => { root.open-settings(); }
+                        }
+                        GhostButton {
+                            icon: root.mode == "smart" ? "sparkles" : "lightning";
+                            label: root.mode == "smart" ? "智能  Tab" : "极速  Tab";
+                            btn-height: 24px; btn-radius: 4px; gap: 5px; font-size: 11.5px;
+                            y: 7px;
+                            tint: root.mode == "smart" ? #c4b5fd : Theme.text-soft;
+                            clicked => { root.toggle-mode(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: root.status-text; font-size: 10.5px; color: Theme.text-muted; vertical-alignment: center; }
+                    }
+                }
+            }
+
+            // 点击空白关闭浮层 / 右键菜单
+            if root.open-menu != "" || root.ctx-visible : TouchArea {
+                clicked => { root.open-menu = ""; root.ctx-visible = false; }
+                pointer-event(ev) => { if (ev.kind == PointerEventKind.down) { root.open-menu = ""; root.ctx-visible = false; } }
+            }
+
+            // 筛选浮层
+            if root.open-menu == "time" : CalendarPopover {
+                x: shelf.time-x; y: 86px;
+                time-preset: root.time-preset;
+                month-title: root.cal-title;
+                days: root.cal-days;
+                summary: root.cal-summary;
+                can-apply: root.cal-can-apply;
+                preset(p) => { root.time-preset-picked(p); }
+                prev-month => { root.cal-prev(); }
+                next-month => { root.cal-next(); }
+                day-clicked(d) => { root.cal-day(d); }
+                day-hovered(d) => { root.cal-hover(d); }
+                clear => { root.cal-clear(); }
+                apply => { root.cal-apply(); }
+            }
+            if root.open-menu == "type" : TypePopover {
+                x: shelf.type-x; y: 86px;
+                value: root.type-value;
+                pick(v) => { root.pick-type(v); }
+            }
+            loc-pop := LocationPopover {
+                visible: root.open-menu == "location";
+                x: shelf.loc-x; y: 86px;
+                value: root.location-value;
+                entries: root.locations;
+                pick(id, name, path) => { root.pick-location(id, name, path); }
+                custom(p) => { root.custom-location(p); }
+                browse => { root.browse-folder(); }
+            }
+
+            // 右键菜单
+            if root.ctx-visible : ContextMenu {
+                x: Math.min(root.ctx-x, root.width - self.width - 8px);
+                y: Math.min(root.ctx-y, root.height - self.height - 8px);
+                open-label: root.ctx-open-label;
+                pin-label: root.ctx-pin-label;
+                enter-label: root.ctx-enter-label;
+                is-folder: root.ctx-is-folder;
+                has-path: root.ctx-has-path;
+                action(a) => { root.ctx-visible = false; root.ctx-action(a); }
+            }
+
+            // 设置面板
+            if root.settings-visible : Rectangle {
+                background: Theme.overlay;
+                TouchArea { clicked => { root.close-settings(); } }
+                SettingsModal {
+                    width: Math.min(740px, root.width - 24px);
+                    height: Math.min(540px, root.height - 24px);
+                    x: (root.width - self.width) / 2;
+                    y: (root.height - self.height) / 2;
+                    close => { root.close-settings(); }
+                    TouchArea { z: -1; }
+                }
+            }
+
+            // Toast
+            toast := Toast {
+                x: (root.width - self.width) / 2;
+                y: root.height - 50px;
+                text: root.toast-text;
+                icon: root.toast-icon;
+                shown: root.toast-shown;
+            }
+        }
+    }
+}

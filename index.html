@@ -1,0 +1,1380 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Windows 本地统一入口 (Anycast) — 前端UI设计图与高保真交互原型</title>
+  <link rel="stylesheet" href="src/styles/tokens.css?v=20260922_2589">
+  <link rel="stylesheet" href="src/styles/acrylic.css?v=20260922_2589">
+  <link rel="stylesheet" href="src/styles/components.css?v=20260922_2589">
+  <link rel="stylesheet" href="src/styles/design-system.css?v=20260922_2589">
+</head>
+<body>
+
+  <!-- Top Showcase Toolbar -->
+  <header class="showcase-header">
+    <div class="brand-badge">
+      <div class="brand-logo">⚡</div>
+      <span>Anycast</span>
+      <span class="brand-sub">Windows 本地统一入口 · Slint 蓝图</span>
+    </div>
+
+    <!-- Center Mode Toggles -->
+    <div class="showcase-controls">
+      <button class="control-btn active" data-view-target="prototype">
+        <span>🖥️ 桌面原型交互</span>
+      </button>
+      <button class="control-btn" data-view-target="design-system">
+        <span>📐 22个Slint组件设计规范</span>
+      </button>
+
+      <!-- Quick Scenario Previews -->
+      <span style="font-size: 11px; color: var(--text-tertiary); margin-left: 6px;">状态直达:</span>
+      <button class="control-btn" data-scenario="idle">空闲</button>
+      <button class="control-btn" data-scenario="docker">极速搜索</button>
+      <button class="control-btn" data-scenario="ai-storage">✦ AI语义</button>
+      <button id="resetLauncherSizeBtn" class="control-btn" title="恢复推荐尺寸 860×560" style="color: #93c5fd; border-color: rgba(59, 130, 246, 0.35);">
+        <span>📐 推荐 860×560</span>
+      </button>
+    </div>
+
+    <!-- Right Controls -->
+    <div class="showcase-controls">
+      <select id="acrylicOpacitySelect" class="control-btn" style="cursor: pointer; outline: none;" title="调整亚克力材质透光度">
+        <option value="balanced" selected>透光: 平衡清晰 (72% 推荐)</option>
+        <option value="high">透光: 高透灵动 (58% 强毛玻璃)</option>
+        <option value="solid">透光: 沉稳聚焦 (86% 强对比)</option>
+      </select>
+
+      <select id="wallpaperSelect" class="control-btn" style="cursor: pointer; outline: none;" title="切换真实桌面壁纸">
+        <option value="user-current" selected>🖼️ 本机当前 Windows 桌面</option>
+        <option value="bloom-dark">🌸 Win11 Bloom 深色</option>
+        <option value="bloom-light">☀️ Win11 Bloom 浅色</option>
+        <option value="nature-spotlight">🏔️ 壮丽山水风景 (高细节对比)</option>
+        <option value="motion">🎨 灵动丝带 (高饱和度透光)</option>
+        <option value="sunrise">🌅 晨曦黎明 (暖色霞光)</option>
+      </select>
+
+      <label class="control-btn" style="cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="选择电脑上的任意图片作为壁纸测试">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>自定义图片</span>
+        <input type="file" id="customWallpaperInput" accept="image/*" style="display: none;">
+      </label>
+
+      <button id="themeToggleBtn" class="control-btn" title="切换深浅亚克力材质">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+      </button>
+
+      <button id="settingsBtn" class="control-btn" title="打开设置面板">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Desktop Simulation Canvas -->
+  <main id="desktopCanvas" class="desktop-canvas" data-wallpaper="user-current">
+
+    <!-- Simulated Desktop Icons Grid on Left -->
+    <div class="desktop-icons-grid">
+      <div class="desktop-icon-item">
+        <div class="desktop-icon-thumb">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <span class="desktop-icon-label">此电脑</span>
+      </div>
+      <div class="desktop-icon-item">
+        <div class="desktop-icon-thumb" style="color: #10b981;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
+        </div>
+        <span class="desktop-icon-label">回收站</span>
+      </div>
+      <div class="desktop-icon-item">
+        <div class="desktop-icon-thumb" style="color: #f59e0b;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+        </div>
+        <span class="desktop-icon-label">工程项目</span>
+      </div>
+      <div class="desktop-icon-item">
+        <div class="desktop-icon-thumb" style="color: #8b5cf6;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
+        </div>
+        <span class="desktop-icon-label">Edge</span>
+      </div>
+    </div>
+
+    <!-- Centered Search Launcher Window (Tinycast / Raycast Design Language) -->
+    <div class="search-window-container">
+      <div id="searchWindow" class="search-window acrylic-surface">
+        
+        <!-- SearchBar with Clean Input & Expandable Filter Button on the Right -->
+        <div class="search-bar-wrapper">
+          <span class="search-icon-prefix">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          </span>
+
+          <input 
+            type="text" 
+            id="searchInput" 
+            class="search-input" 
+            placeholder="搜索应用、文件、剪贴板……" 
+            autocomplete="off" 
+            spellcheck="false"
+          />
+
+          <button id="searchClearBtn" class="search-clear-btn" title="清除输入">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+
+          <!-- Search Filter Icon Button (无外框、无底色、纯图标状态切换：默认空心 / 激活实心) -->
+          <button id="toggleFilterShelfBtn" class="search-filter-icon-btn" title="检索过滤 (时间、类型、位置)">
+            <svg class="filter-icon-outline" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+            </svg>
+            <svg class="filter-icon-solid" viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Search Filter Expandable Shelf (单行极简、无异色背景、Notion 风格下拉胶囊) -->
+        <div id="searchFilterShelf" class="search-filter-shelf collapsed">
+          <div class="filter-shelf-pills">
+            <!-- Time Filter Pill with Calendar Range Popover -->
+            <div class="filter-dropdown-wrap" data-group="time">
+              <button class="filter-pill" id="pillFilterTime" title="过滤时间范围或选择自定义日期">
+                <span class="pill-icon">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </span>
+                <span class="pill-label">时间</span>
+                <span class="pill-action">
+                  <svg class="pill-chevron" viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
+                </span>
+              </button>
+              
+              <!-- Popover with Presets & Date Range Calendar -->
+              <div class="filter-dropdown-menu filter-calendar-popover" id="menuFilterTime">
+                <!-- Preset Chips Bar -->
+                <div class="time-presets-header">
+                  <div class="time-presets-grid">
+                    <button class="time-preset-chip active" data-val="all">全部</button>
+                    <button class="time-preset-chip" data-val="today">今天</button>
+                    <button class="time-preset-chip" data-val="7days">7天内</button>
+                    <button class="time-preset-chip" data-val="30days">30天内</button>
+                    <button class="time-preset-chip" data-val="year">1年内</button>
+                  </div>
+                </div>
+
+                <div class="cal-popover-divider"></div>
+
+                <!-- Fluent Date Range Calendar -->
+                <div class="cal-container">
+                  <div class="cal-nav-bar">
+                    <button class="cal-nav-arrow" id="calPrevMonthBtn" title="上一月">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
+                    </button>
+                    <span class="cal-current-month" id="calMonthTitle">2026年 9月</span>
+                    <button class="cal-nav-arrow" id="calNextMonthBtn" title="下一月">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
+                    </button>
+                  </div>
+
+                  <div class="cal-weekdays-row">
+                    <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+                  </div>
+
+                  <!-- Days Grid (dynamically rendered) -->
+                  <div class="cal-days-grid" id="calDaysGrid"></div>
+
+                  <!-- Date Range Status & Actions -->
+                  <div class="cal-footer">
+                    <div class="cal-range-summary" id="calRangeSummary">
+                      <span class="cal-status-text">点击选择起止日期范围</span>
+                    </div>
+                    <div class="cal-actions">
+                      <button class="cal-btn-clear" id="calClearBtn" title="清空日期选择">清空</button>
+                      <button class="cal-btn-apply" id="calApplyBtn" title="应用所选范围">应用</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Type Filter Pill -->
+            <div class="filter-dropdown-wrap" data-group="type">
+              <button class="filter-pill" id="pillFilterType" title="过滤文件类型">
+                <span class="pill-icon">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </span>
+                <span class="pill-label">类型</span>
+                <span class="pill-action">
+                  <svg class="pill-chevron" viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
+                </span>
+              </button>
+              <div class="filter-dropdown-menu" id="menuFilterType">
+                <div class="filter-menu-item active" data-val="all">
+                  <div class="filter-item-left">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                    <span>全部类型</span>
+                  </div>
+                  <span class="menu-check">✓</span>
+                </div>
+                <div class="filter-menu-item" data-val="app">
+                  <div class="filter-item-left">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/></svg>
+                    <span>应用 (.exe)</span>
+                  </div>
+                  <span class="menu-check">✓</span>
+                </div>
+                <div class="filter-menu-item" data-val="document">
+                  <div class="filter-item-left">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                    <span>文档与笔记</span>
+                  </div>
+                  <span class="menu-check">✓</span>
+                </div>
+                <div class="filter-menu-item" data-val="code">
+                  <div class="filter-item-left">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><polyline points="10 13 8 15 10 17"/><polyline points="14 13 16 15 14 17"/></svg>
+                    <span>代码与工程</span>
+                  </div>
+                  <span class="menu-check">✓</span>
+                </div>
+                <div class="filter-menu-item" data-val="media">
+                  <div class="filter-item-left">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                    <span>图片与媒体</span>
+                  </div>
+                  <span class="menu-check">✓</span>
+                </div>
+                <div class="filter-menu-item" data-val="clipboard">
+                  <div class="filter-item-left">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+                    <span>剪贴板历史</span>
+                  </div>
+                  <span class="menu-check">✓</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Location Filter Pill -->
+            <div class="filter-dropdown-wrap" data-group="location">
+              <button class="filter-pill" id="pillFilterLocation" title="过滤检索位置">
+                <span class="pill-icon">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>
+                </span>
+                <span class="pill-label">位置</span>
+                <span class="pill-action">
+                  <svg class="pill-chevron" viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
+                </span>
+              </button>
+              <div class="filter-dropdown-menu filter-location-popover" id="menuFilterLocation">
+                <!-- Search / Path Quick Filter Input -->
+                <div class="loc-search-box">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <input type="text" id="locSearchInput" class="loc-search-input" placeholder="过滤或输入文件夹路径..." autocomplete="off" spellcheck="false" />
+                </div>
+
+                <div class="loc-menu-scrollable" id="locMenuScrollable">
+                  <!-- Group 1: Drives & System Standard Locations -->
+                  <div class="loc-group-title">系统磁盘与常用目录</div>
+                  
+                  <div class="filter-menu-item active" data-val="all" data-name="全盘" data-path="">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>
+                      <span>全盘索引 (NTFS)</span>
+                    </div>
+                    <span class="menu-check">✓</span>
+                  </div>
+
+                  <div class="filter-menu-item" data-val="drive-c" data-name="C: 盘" data-path="c:">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 18h.01"/><path d="M10 18h.01"/><ellipse cx="12" cy="6" rx="8" ry="3"/></svg>
+                      <span>C:\ 系统盘</span>
+                    </div>
+                    <span class="loc-item-sub">系统与程序</span>
+                    <span class="menu-check">✓</span>
+                  </div>
+
+                  <div class="filter-menu-item" data-val="drive-d" data-name="D: 盘" data-path="d:">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 18h.01"/><path d="M10 18h.01"/><ellipse cx="12" cy="6" rx="8" ry="3"/></svg>
+                      <span>D:\ 工作磁盘</span>
+                    </div>
+                    <span class="loc-item-sub">数据与工程</span>
+                    <span class="menu-check">✓</span>
+                  </div>
+
+                  <div class="filter-menu-item" data-val="desktop" data-name="桌面" data-path="desktop">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                      <span>桌面 (Desktop)</span>
+                    </div>
+                    <span class="menu-check">✓</span>
+                  </div>
+
+                  <div class="filter-menu-item" data-val="downloads" data-name="下载" data-path="download">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      <span>下载 (Downloads)</span>
+                    </div>
+                    <span class="menu-check">✓</span>
+                  </div>
+
+                  <div class="filter-menu-item" data-val="documents" data-name="文档" data-path="document">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                      <span>个人文档</span>
+                    </div>
+                    <span class="menu-check">✓</span>
+                  </div>
+
+                  <div class="loc-divider"></div>
+
+                  <!-- Group 2: Workspaces & Specific Folders (进入文件夹查找) -->
+                  <div class="loc-group-title">常用工作区与工程目录</div>
+
+                  <div class="filter-menu-item" data-val="folder-anycast" data-name="Anycast" data-path="anycast">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+                      <span>Anycast</span>
+                    </div>
+                    <span class="loc-item-sub">D:\Anycast</span>
+                    <span class="menu-check">✓</span>
+                  </div>
+
+                  <div class="filter-menu-item" data-val="folder-projects" data-name="Projects" data-path="projects">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+                      <span>Projects</span>
+                    </div>
+                    <span class="loc-item-sub">D:\Projects</span>
+                    <span class="menu-check">✓</span>
+                  </div>
+
+                  <div class="filter-menu-item" data-val="folder-easynote" data-name="EasyNote" data-path="easynote">
+                    <div class="filter-item-left">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+                      <span>EasyNote</span>
+                    </div>
+                    <span class="loc-item-sub">E:\Projects\EasyNote</span>
+                    <span class="menu-check">✓</span>
+                  </div>
+                </div>
+
+                <div class="loc-divider"></div>
+
+                <!-- Custom Browse Action -->
+                <div class="loc-footer-action" id="locBrowseFolderBtn" title="选择任意本地文件夹进入检索">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>
+                  <span>选择自定义文件夹...</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Reset Filter Button -->
+            <button id="resetShelfFilterBtn" class="filter-pill-reset" title="重置全部筛选条件">
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              <span>重置</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- AI Semantic Intent Bar -->
+        <div id="aiIntentBar" class="ai-intent-bar">
+          <div class="ai-intent-badge">
+            <span>意图解析:</span>
+          </div>
+          <div id="aiChipsList" class="ai-chips-list">
+            <!-- Dynamically injected -->
+          </div>
+        </div>
+
+        <!-- Pinned Quick Access Shelf (置顶快速访问：固定图标卡片，仅置顶页支持鼠标滚轮横向左右滚动切换) -->
+        <div id="pinnedShelfSection" class="pinned-shelf-section">
+          <div class="pinned-shelf-header">
+            <div class="pinned-shelf-title-wrap">
+              <span class="pinned-shelf-icon">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" fill-opacity="0.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="17" x2="12" y2="22"/>
+                  <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+                </svg>
+              </span>
+              <span>置顶</span>
+            </div>
+            <button id="togglePinnedBtn" class="pinned-toggle-btn" title="折叠 / 展开置顶快速访问" aria-label="折叠或展开置顶快速访问">
+              <svg class="pinned-icon-expanded" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m18 15-6-6-6 6"/>
+              </svg>
+              <svg class="pinned-icon-collapsed" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m6 9 6 6 6-6"/>
+              </svg>
+            </button>
+          </div>
+          <div class="pinned-track-wrapper" id="pinnedTrackWrapper">
+            <div id="pinnedGrid" class="pinned-grid">
+              <!-- Dynamically populated squircle pinned cards -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Category Filter Bar (严格4类筛选：全部、文件、应用、剪贴板) -->
+        <div id="categoryFilterBar" class="category-filter-bar">
+          <div class="category-tabs" id="categoryTabs">
+            <button class="category-tab active" data-filter="all" type="button">
+              <span class="tab-icon">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </span>
+              <span class="tab-label">全部</span>
+            </button>
+            <button class="category-tab" data-filter="file" type="button">
+              <span class="tab-icon">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </span>
+              <span class="tab-label">文件</span>
+            </button>
+            <button class="category-tab" data-filter="app" type="button">
+              <span class="tab-icon">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
+              </span>
+              <span class="tab-label">应用</span>
+            </button>
+            <button class="category-tab" data-filter="clipboard" type="button">
+              <span class="tab-icon">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+              </span>
+              <span class="tab-label">剪贴板</span>
+            </button>
+          </div>
+
+          <!-- Secondary Sub-filter bar for Clipboard inline -->
+          <div id="clipboardSubFilterBar" class="clipboard-sub-filter-bar">
+            <div class="sub-filter-chips" id="clipboardSubFilterChips">
+              <button class="sub-filter-chip active" data-subfilter="all">
+                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                <span>全部</span>
+              </button>
+              <button class="sub-filter-chip" data-subfilter="text">
+                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="16" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>
+                <span>纯文本</span>
+              </button>
+              <button class="sub-filter-chip" data-subfilter="code">
+                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                <span>代码</span>
+              </button>
+              <button class="sub-filter-chip" data-subfilter="url">
+                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <span>链接</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Search Body: 100% Full Width Results Pane -->
+        <div class="search-body" id="searchBody">
+          <div id="resultPane" class="search-result-pane">
+            <!-- Dynamically rendered items (Squircle List or Grid View) -->
+          </div>
+        </div>
+
+        <!-- Signature Tinycast / Raycast Footer Bar -->
+        <footer class="palette-footer" id="paletteFooter">
+          <div class="palette-footer-left">
+            <button id="viewModeToggleBtn" class="footer-btn" title="切换视图模式 (列表 / 图标)">
+              <span id="viewModeIcon" class="btn-icon">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              </span>
+              <span id="viewModeLabel">列表</span>
+            </button>
+            <button id="launcherSettingsBtn" class="footer-btn" title="Anycast 偏好设置">
+              <span class="btn-icon">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+              </span>
+              <span>设置</span>
+            </button>
+          </div>
+        </footer>
+
+        <!-- Window Manual Resize Handles (用户自由手动调整大小) -->
+        <div class="resize-handle resize-handle-e" data-direction="e" title="按住拖拽调整宽度"></div>
+        <div class="resize-handle resize-handle-s" data-direction="s" title="按住拖拽调整高度"></div>
+        <div class="resize-handle resize-handle-se" data-direction="se" title="按住拖拽调整窗口大小">
+          <svg viewBox="0 0 10 10" width="10" height="10" fill="currentColor">
+            <circle cx="8" cy="8" r="1"/>
+            <circle cx="8" cy="4.5" r="1"/>
+            <circle cx="4.5" cy="8" r="1"/>
+            <circle cx="8" cy="1" r="1"/>
+            <circle cx="4.5" cy="4.5" r="1"/>
+            <circle cx="1" cy="8" r="1"/>
+          </svg>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Windows 11 Desktop Taskbar -->
+    <div class="desktop-taskbar">
+      <div class="taskbar-center-icons">
+        <div class="taskbar-icon active" title="开始菜单">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>
+        </div>
+        <div class="taskbar-icon" title="搜索">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <div class="taskbar-icon" title="任务视图">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+        </div>
+        <div class="taskbar-icon" title="文件管理器">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ContextMenu Component (Unified Fluent Action Menu) -->
+  <div id="contextMenu" class="context-menu">
+    <div class="context-menu-header">
+      <span class="context-menu-title">操作菜单</span>
+      <kbd class="action-kbd">Esc</kbd>
+    </div>
+    <div class="context-menu-list">
+      <div class="context-menu-item" id="ctxOpen">
+        <div class="context-menu-item-left">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span id="ctxOpenLabel">立即打开</span>
+        </div>
+        <kbd class="action-kbd">Enter</kbd>
+      </div>
+      <div class="context-menu-item" id="ctxFolder">
+        <div class="context-menu-item-left">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>
+          <span>在资源管理器中显示</span>
+        </div>
+        <kbd class="action-kbd">Ctrl+O</kbd>
+      </div>
+      <div class="context-menu-item" id="ctxEnterFolder" style="display: none;">
+        <div class="context-menu-item-left">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><polyline points="10 13 13 13 13 10"/><line x1="13" y1="13" x2="8" y2="18"/></svg>
+          <span id="ctxEnterFolderLabel">进入此文件夹查找</span>
+        </div>
+        <kbd class="action-kbd">Tab</kbd>
+      </div>
+      <div class="context-menu-item" id="ctxCopyPath">
+        <div class="context-menu-item-left">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          <span>复制完整路径</span>
+        </div>
+        <kbd class="action-kbd">Ctrl+C</kbd>
+      </div>
+      <div class="context-menu-item" id="ctxPin">
+        <div class="context-menu-item-left">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+          <span id="ctxPinLabel">固定 / 取消固定</span>
+        </div>
+        <kbd class="action-kbd">Ctrl+P</kbd>
+      </div>
+      <div class="context-menu-divider"></div>
+      <div class="context-menu-item danger" id="ctxRemove">
+        <div class="context-menu-item-left">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
+          <span>从最近记录中移除</span>
+        </div>
+        <kbd class="action-kbd">Del</kbd>
+      </div>
+    </div>
+  </div>
+
+  <!-- SettingsModal Component - Pure Two-Column Layout -->
+  <div id="settingsModal" class="modal-overlay">
+    <div class="settings-modal acrylic-surface">
+      <!-- Settings Close Button (Top Right Floating) -->
+      <button id="closeSettingsBtn" class="settings-modal-close-btn" title="关闭设置 (Esc)">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+
+      <!-- Left Column: Sidebar (From Top to Bottom) -->
+      <aside class="settings-sidebar">
+        <div class="settings-sidebar-header">
+          <div class="settings-brand-badge">
+            <span class="settings-brand-icon">⚡</span>
+          </div>
+          <span class="settings-sidebar-brand-title">Anycast 设置</span>
+        </div>
+
+        <nav class="settings-sidebar-nav">
+          <button class="settings-nav-item active" data-tab="general">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </span>
+            <span class="settings-nav-text">常规设置</span>
+          </button>
+          <button class="settings-nav-item" data-tab="appearance">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+            </span>
+            <span class="settings-nav-text">外观设置</span>
+          </button>
+          <button class="settings-nav-item" data-tab="hotkeys">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="6" y1="10" x2="6.01" y2="10"/><line x1="10" y1="10" x2="10.01" y2="10"/><line x1="14" y1="10" x2="14.01" y2="10"/><line x1="18" y1="10" x2="18.01" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/></svg>
+            </span>
+            <span class="settings-nav-text">快捷直达</span>
+          </button>
+          <button class="settings-nav-item" data-tab="search">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </span>
+            <span class="settings-nav-text">搜索与索引</span>
+          </button>
+          <button class="settings-nav-item" data-tab="clipboard">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+            </span>
+            <span class="settings-nav-text">剪贴板历史</span>
+          </button>
+          <button class="settings-nav-item" data-tab="ai">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/><path d="M5 3v4"/><path d="M19 17v4"/></svg>
+            </span>
+            <span class="settings-nav-text">AI 语义引擎</span>
+          </button>
+        </nav>
+      </aside>
+
+      <!-- Right Column: Content Pane (From Top to Bottom) -->
+      <main class="settings-content-pane">
+        <!-- Tab 1: General (常规设置) -->
+        <div class="settings-tab-pane" id="tab-general" style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="settings-pane-header">
+            <div class="settings-pane-title">常规设置</div>
+            <div class="settings-pane-desc">快捷唤醒、系统启动与基础桌面交互行为偏好</div>
+          </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">快捷唤醒与启动</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">全局唤醒快捷键</div>
+                    <div class="settings-row-desc">在任意窗口或全屏程序下快速呼出 Anycast 居中浮动搜索窗口</div>
+                  </div>
+                  <kbd class="fluent-kbd">Alt + Space</kbd>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">开机自启动</div>
+                    <div class="settings-row-desc">登录 Windows 桌面后自动在后台托盘静默就绪</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">失去焦点时自动隐藏</div>
+                    <div class="settings-row-desc">点击搜索窗口外部区域时自动平滑隐藏至后台</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">界面与交互偏好</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">默认初始搜索模式</div>
+                    <div class="settings-row-desc">呼出窗口时默认采用的搜索模式（按 Tab 键可随时切换）</div>
+                  </div>
+                  <select class="settings-select">
+                    <option value="fast" selected>⚡ 极速模式 (默认)</option>
+                    <option value="smart">✦ AI 智能模式</option>
+                  </select>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">双击条目立即执行</div>
+                    <div class="settings-row-desc">在列表项或图标卡片上双击时直接通过系统关联程序打开</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">系统托盘与维护</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">常驻系统托盘</div>
+                    <div class="settings-row-desc">Anycast 不占用任务栏与 Alt+Tab；关闭窗口即隐藏至托盘，点托盘图标或按唤醒热键唤出</div>
+                  </div>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">缩略图与索引缓存</div>
+                    <div class="settings-row-desc">当前运行时图标与临时数据占用: 14.8 MB</div>
+                  </div>
+                  <button id="clearAppCacheBtn" class="btn-secondary-xs" title="释放本地临时缓存">清理缓存</button>
+                </div>
+              </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Appearance (外观设置) -->
+        <div class="settings-tab-pane" id="tab-appearance" style="display: none; flex-direction: column; gap: 16px;">
+          <div class="settings-pane-header">
+            <div class="settings-pane-title">外观设置</div>
+            <div class="settings-pane-desc">亚克力透光材质调校、模拟桌面壁纸切换与深浅色彩模式</div>
+          </div>
+
+          <div class="settings-card-group">
+            <div class="settings-card-group-title">亚克力透光材质 (Acrylic Material)</div>
+            <div class="settings-card-container">
+              <div class="settings-card-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">材质透光度预设档位 (实时渲染)</div>
+                  <div class="settings-row-desc">调节窗口磨砂毛玻璃透光比例与底层桌面环境融合度（当前立即生效）</div>
+                </div>
+                <select id="modalAcrylicOpacitySelect" class="settings-select">
+                  <option value="balanced" selected>透光: 平衡清晰 (72% 推荐)</option>
+                  <option value="high">透光: 高透灵动 (58% 强毛玻璃)</option>
+                  <option value="solid">透光: 沉稳聚焦 (86% 强对比)</option>
+                </select>
+              </div>
+              <div class="settings-card-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">GPU 硬件加速高斯模糊</div>
+                  <div class="settings-row-desc">开启 40px 高斯模糊与 190% 色彩饱和度增强，保持 60fps 丝滑渲染</div>
+                </div>
+                <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+              </div>
+              <div class="settings-card-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">边缘高光与微晶质感</div>
+                  <div class="settings-row-desc">在窗体顶部呈现 1px 晶莹高光边框以增强立体纵深感</div>
+                </div>
+                <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-card-group">
+            <div class="settings-card-group-title">模拟桌面环境与壁纸 (Wallpaper)</div>
+            <div class="settings-card-container">
+              <div class="settings-card-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">桌面背景壁纸切换</div>
+                  <div class="settings-row-desc">测试 Anycast 浮动窗口在不同色调桌面壁纸下的透视折射效果</div>
+                </div>
+                <select id="modalWallpaperSelect" class="settings-select">
+                  <option value="user-current" selected>🖼️ 本机当前 Windows 桌面</option>
+                  <option value="bloom-dark">🌸 Win11 Bloom 深色</option>
+                  <option value="bloom-light">☀️ Win11 Bloom 浅色</option>
+                  <option value="nature-spotlight">🏔️ 壮丽山水风景 (高细节对比)</option>
+                  <option value="motion">🎨 灵动丝带 (高饱和度透光)</option>
+                  <option value="sunrise">🌅 晨曦黎明 (暖色霞光)</option>
+                </select>
+              </div>
+              <div class="settings-card-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">载入自定义本地壁纸</div>
+                  <div class="settings-row-desc">支持选择本地 JPG、PNG、WebP 图片作为桌面壁纸背景进行测试</div>
+                </div>
+                <label class="btn-secondary-xs" style="cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  <span>浏览文件...</span>
+                  <input type="file" id="modalCustomWallpaperInput" accept="image/*" style="display: none;">
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-card-group">
+            <div class="settings-card-group-title">色彩与主题模式 (Theme Mode)</div>
+            <div class="settings-card-container">
+              <div class="settings-card-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">界面色彩主题</div>
+                  <div class="settings-row-desc">切换 Anycast 主窗口与设置面板的明暗视觉基调</div>
+                </div>
+                <select id="modalThemeSelect" class="settings-select">
+                  <option value="dark" selected>🌙 深色模式 (Dark)</option>
+                  <option value="light">☀️ 浅色模式 (Light)</option>
+                </select>
+              </div>
+              <div class="settings-card-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">Windows 11 系统强调色</div>
+                  <div class="settings-row-desc">指示条、激活状态开关与主按键采用的标准视觉强调色</div>
+                </div>
+                <span class="badge-pill-info">亚克力晶体白 (Fluent White)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+          <!-- Tab 3: Hotkeys / App & File Binding -->
+          <div class="settings-tab-pane" id="tab-hotkeys" style="display: none; flex-direction: column; gap: 14px;">
+            <div class="settings-pane-header-row">
+              <div class="settings-pane-header" style="margin-bottom: 0;">
+                <div class="settings-pane-title">快捷直达</div>
+                <div class="settings-pane-desc">分配全局专属热键，在任意系统界面按下即可直接唤醒或定位，无需呼出搜索框</div>
+              </div>
+              <button id="addHotkeyBtn" class="btn-accent-sm" title="添加新的应用或文件快捷键绑定">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>添加绑定</span>
+              </button>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-container">
+                <div class="settings-card-row" style="background: rgba(59, 130, 246, 0.05);">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">全局热键直达服务</div>
+                    <div class="settings-row-desc">系统底层全局静默监听注册按键，毫秒级唤起并激活目标程序</div>
+                  </div>
+                  <div class="switch-toggle active" id="globalHotkeyMasterToggle" title="启用或暂停所有快捷直达热键"><div class="switch-toggle-knob"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Add Hotkey Form Panel (Hidden by default, expandable) -->
+            <div id="addHotkeyPanel" class="add-hotkey-panel" style="display: none;">
+              <div class="add-hotkey-header">
+                <span class="add-hotkey-title">新建快捷键绑定</span>
+                <button id="closeAddHotkeyBtn" class="add-hotkey-close" title="取消">✕</button>
+              </div>
+              <div class="add-hotkey-body">
+                <div class="add-field-group">
+                  <label class="add-field-label">绑定目标名称</label>
+                  <input type="text" id="newHotkeyTitle" class="add-field-input" placeholder="例如：Photoshop、工作笔记、下载目录" />
+                </div>
+                <div class="add-field-group">
+                  <label class="add-field-label">程序或文件完整路径</label>
+                  <div class="input-with-action">
+                    <input type="text" id="newHotkeyPath" class="add-field-input" placeholder="例如：C:\Program Files\...\app.exe 或 D:\Docs" />
+                    <button id="chooseFromRecentBtn" class="btn-secondary-xs" title="从最近/置顶列表中快速填充">从列表选择</button>
+                  </div>
+                </div>
+                <div class="add-field-row">
+                  <div class="add-field-group" style="flex: 1;">
+                    <label class="add-field-label">目标类型</label>
+                    <select id="newHotkeyType" class="add-field-select">
+                      <option value="app">🚀 应用程序 (.exe)</option>
+                      <option value="folder">📁 文件夹目录</option>
+                      <option value="file">📄 文件 / 代码文档</option>
+                    </select>
+                  </div>
+                  <div class="add-field-group" style="flex: 1;">
+                    <label class="add-field-label">快捷键组合 (点击录制)</label>
+                    <div class="hotkey-record-box" id="newHotkeyRecordBox" tabindex="0" title="点击后按下键盘组合键">
+                      <span id="newHotkeyKbdPreview"><kbd class="hk-kbd">Alt</kbd> + <kbd class="hk-kbd">K</kbd></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="add-hotkey-actions">
+                  <button id="cancelAddHotkeyBtn" class="btn-ghost-sm">取消</button>
+                  <button id="saveNewHotkeyBtn" class="btn-primary-sm">保存并生效</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Hotkeys Binding List Container -->
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">已配置的快捷直达项目</div>
+              <div id="hotkeysListContainer" class="hotkeys-list-container">
+                <!-- Dynamically populated via renderHotkeyBindings() -->
+              </div>
+            </div>
+
+            <div class="hotkey-conflict-tip">
+              <span style="font-size: 13px;">💡</span>
+              <span>建议优先使用 <kbd class="hk-kbd">Alt + 单键</kbd> 或 <kbd class="hk-kbd">Ctrl + Shift + 单键</kbd>，避开系统内置的全局快捷键（如 Ctrl+C、Win+L 等）。</span>
+            </div>
+          </div>
+
+          <!-- Tab 3: Search -->
+          <div class="settings-tab-pane" id="tab-search" style="display: none; flex-direction: column; gap: 16px;">
+            <div class="settings-pane-header">
+              <div class="settings-pane-title">搜索与索引</div>
+              <div class="settings-pane-desc">NTFS USN 变更日志监控与 SQLite FTS5 全文倒排检索引擎配置</div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">本地索引引擎核心</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">实时增量索引</div>
+                    <div class="settings-row-desc">基于 Windows USN 日志秒级感知本地文件的新增、修改与删除</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">文件正文全文检索 (FTS5)</div>
+                    <div class="settings-row-desc">针对 Markdown、代码、纯文本及配置文档建立正文倒排索引</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">搜索结果包含隐藏文件</div>
+                    <div class="settings-row-desc">允许检索系统隐藏属性文件与点开头的配置目录（如 .config）</div>
+                  </div>
+                  <div class="switch-toggle"><div class="switch-toggle-knob"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">索引范围与排除规则</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">自动排除大型开发构建缓存</div>
+                    <div class="settings-row-desc">自动跳过 node_modules、.git、target、dist、.next 等目录以保障性能</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">索引库统计与维护</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">本地索引库状态</div>
+                    <div class="settings-row-desc">已建立索引条目: 142,580 个文件 · 索引库体积: 24.6 MB</div>
+                  </div>
+                  <button id="rebuildIndexBtn" class="btn-secondary-xs" title="清空并重新扫描全盘 NTFS USN 索引">重建索引</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 4: Clipboard -->
+          <div class="settings-tab-pane" id="tab-clipboard" style="display: none; flex-direction: column; gap: 16px;">
+            <div class="settings-pane-header">
+              <div class="settings-pane-title">剪贴板历史记录</div>
+              <div class="settings-pane-desc">本地加密保存复制记录，支持文本、代码片段与链接随时秒搜复用</div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">监控与容量管理</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">启用剪贴板监控</div>
+                    <div class="settings-row-desc">在系统后台安全捕获剪贴板变动，提供历史检索服务</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">最大历史保留容量</div>
+                    <div class="settings-row-desc">超出设定容量后自动清理未置顶固定的最旧历史项目</div>
+                  </div>
+                  <select class="settings-select">
+                    <option value="100">100 条</option>
+                    <option value="300">300 条</option>
+                    <option value="500" selected>500 条 (推荐)</option>
+                    <option value="1000">1000 条</option>
+                  </select>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">相同内容自动合并置顶</div>
+                    <div class="settings-row-desc">再次复制历史中已存在的内容时，自动刷新时间戳并移至首位</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">隐私与敏感数据保护</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">忽略密码管理器复制内容</div>
+                    <div class="settings-row-desc">自动识别 1Password、Bitwarden、KeePass 等工具避免记录机密密码</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">银行卡与身份证脱敏展示</div>
+                    <div class="settings-row-desc">在剪贴板列表展示敏感卡号时自动将中段数字替换为星号</div>
+                  </div>
+                  <div class="switch-toggle"><div class="switch-toggle-knob"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">存储安全与数据清理</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">本地加密存储</div>
+                    <div class="settings-row-desc">剪贴板历史数据通过本地专用密钥进行 AES-256 GCM 加密存放</div>
+                  </div>
+                  <span class="badge-pill-success">● 已就绪</span>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">清空历史数据</div>
+                    <div class="settings-row-desc">一键彻底清除所有未固定的剪贴板历史记录</div>
+                  </div>
+                  <button id="clearClipboardBtn" class="btn-danger-xs">清空未固定项目</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 5: AI -->
+          <div class="settings-tab-pane" id="tab-ai" style="display: none; flex-direction: column; gap: 16px;">
+            <div class="settings-pane-header">
+              <div class="settings-pane-title">AI 语义引擎</div>
+              <div class="settings-pane-desc">本地轻量级向量嵌入模型与自然语言意图理解，零网络依赖保护隐私</div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">本地模型与向量检索</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">AI 语义增强模式</div>
+                    <div class="settings-row-desc">支持通过自然语言模糊描述（如“找一下昨天修改的架构设计”）查找文件</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">本地向量 Embedding 模型</div>
+                    <div class="settings-row-desc">sqlite-vec + bge-small-zh 本地量化模型（极低内存占用）</div>
+                  </div>
+                  <span class="badge-pill-info">bge-small-zh · 48MB</span>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">按需动态唤醒加载</div>
+                    <div class="settings-row-desc">日常极速搜索不加载模型（0 内存消耗），仅在按 Tab 切换智能模式时唤醒</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="settings-card-group-title">语义意图理解与加速</div>
+              <div class="settings-card-container">
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">自然语言时间与类型解析</div>
+                    <div class="settings-row-desc">智能识别输入中的“昨天”、“上周”、“代码”、“文档”并自动转为结构化过滤</div>
+                  </div>
+                  <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                </div>
+                <div class="settings-card-row">
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">本地推理加速硬件</div>
+                    <div class="settings-row-desc">当前计算后端: CPU (AVX2 指令集优化) · 零网络请求</div>
+                  </div>
+                  <span class="badge-pill-success">● 就绪 (0ms 延迟)</span>
+                </div>
+              </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Design System Spec Board (22 Slint Components Gallery) -->
+  <section id="designSystemView" class="design-system-view">
+    <div class="spec-container">
+      <div class="spec-hero">
+        <h1>
+          <span>📐 Anycast UI 设计系统规范与 Slint 映射蓝图</span>
+        </h1>
+        <p>
+          本规范展板依据《Windows 本地统一入口 — 项目基础设计文档》第 22 节组件规划构建。
+          每个组件均已调优 Windows 11 Acrylic/Glass 材质参数与微交互，并提供对应的 <code>.slint</code> 架构代码与 Rust 绑定契约，为后续 Agent 原生开发提供精准依据。
+        </p>
+      </div>
+
+      <!-- Section 1: Design Tokens -->
+      <div class="spec-section">
+        <div class="spec-section-header">
+          <div class="spec-section-title">
+            <span>🎨 核心视觉 Token (Tokens & Materials)</span>
+          </div>
+          <span class="spec-section-badge">Windows 11 Acrylic</span>
+        </div>
+
+        <div class="tokens-grid">
+          <div class="token-card">
+            <div class="token-swatch" style="background: rgba(24, 26, 32, 0.78); backdrop-filter: blur(20px);">Dark Acrylic</div>
+            <div class="token-info"><span class="token-name">--acrylic-bg (Dark)</span><span class="token-val">rgba(24, 26, 32, 0.78)</span></div>
+          </div>
+          <div class="token-card">
+            <div class="token-swatch" style="background: rgba(248, 249, 251, 0.85); color: #111;">Light Acrylic</div>
+            <div class="token-info"><span class="token-name">--acrylic-bg (Light)</span><span class="token-val">rgba(248, 249, 251, 0.85)</span></div>
+          </div>
+          <div class="token-card">
+            <div class="token-swatch" style="background: #3b82f6;">Fluent Blue</div>
+            <div class="token-info"><span class="token-name">--accent-primary</span><span class="token-val">#3b82f6 (Focus & Selection)</span></div>
+          </div>
+          <div class="token-card">
+            <div class="token-swatch" style="background: linear-gradient(135deg, #a855f7, #3b82f6);">AI Sparkle Gradient</div>
+            <div class="token-info"><span class="token-name">--ai-gradient</span><span class="token-val">#a855f7 → #3b82f6</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: 22 Slint Components Gallery -->
+      <div class="spec-section">
+        <div class="spec-section-header">
+          <div class="spec-section-title">
+            <span>🧩 22 个 Slint 核心组件规范与代码契约</span>
+          </div>
+          <span class="spec-section-badge">Section 22 完整覆盖</span>
+        </div>
+
+        <div class="components-gallery">
+
+          <!-- 1. AcrylicSurface & GlassSurface -->
+          <div class="component-spec-card">
+            <div class="component-spec-header">
+              <div class="component-name-group">
+                <span class="component-title">AcrylicSurface & GlassSurface</span>
+                <span class="component-desc">基础亚克力磨砂与玻璃态容器基底</span>
+              </div>
+              <span class="spec-section-badge">Container</span>
+            </div>
+            <div class="component-spec-body">
+              <div class="component-preview-box">
+                <div class="acrylic-surface" style="padding: 20px 30px; text-align: center;">
+                  <div style="font-weight: 600; margin-bottom: 4px;">AcrylicSurface 材质呈现</div>
+                  <div style="font-size: 12px; color: var(--text-secondary);">36px 动态高斯模糊 + 噪点微纹理 + 1px 渐变高光边框</div>
+                </div>
+              </div>
+              <div class="component-code-box">
+<span class="slint-comment">// Slint Blueprint: AcrylicSurface.slint</span>
+<span class="slint-tag">export component</span> AcrylicSurface <span class="slint-tag">inherits</span> Rectangle {
+    <span class="slint-prop">in property &lt;color&gt;</span> surface-color: #181a20c7;
+    <span class="slint-prop">in property &lt;length&gt;</span> corner-radius: 16px;
+    <span class="slint-prop">in property &lt;length&gt;</span> border-width: 1px;
+    <span class="slint-prop">in property &lt;brush&gt;</span> border-brush: @linear-gradient(135deg, #ffffff2e, #ffffff08);
+    background: surface-color;
+    border-radius: corner-radius;
+    <span class="slint-comment">// 在 Windows 原生层接入 DwmSetWindowAttribute (Mica/Acrylic API)</span>
+}
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. SearchBar & SearchModeSelector -->
+          <div class="component-spec-card">
+            <div class="component-spec-header">
+              <div class="component-name-group">
+                <span class="component-title">SearchBar & SearchModeSelector</span>
+                <span class="component-desc">产品最核心的搜索入口与极速/AI模式滑动选择器</span>
+              </div>
+              <span class="spec-section-badge">Core Interaction</span>
+            </div>
+            <div class="component-spec-body">
+              <div class="component-preview-box">
+                <div style="width: 100%; max-width: 480px; background: var(--acrylic-bg); border-radius: 12px; border: 1px solid var(--acrylic-border); padding: 8px 14px; display: flex; align-items: center; gap: 10px;">
+                  <span style="color: var(--accent-primary);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
+                  <span style="color: var(--text-primary); font-size: 14px; flex: 1;">docker|</span>
+                  <div style="display: flex; background: var(--acrylic-bg-hover); padding: 2px 6px; border-radius: 20px; font-size: 11px; gap: 4px; border: 1px solid var(--acrylic-border);">
+                    <span style="background: var(--accent-primary); color: #fff; padding: 2px 8px; border-radius: 12px;">⚡ 极速</span>
+                    <span style="color: var(--text-secondary); padding: 2px 6px;">✦ 智能</span>
+                  </div>
+                </div>
+              </div>
+              <div class="component-code-box">
+<span class="slint-comment">// Slint Blueprint: SearchBar.slint</span>
+<span class="slint-tag">export component</span> SearchBar {
+    <span class="slint-prop">in-out property &lt;string&gt;</span> text;
+    <span class="slint-prop">in-out property &lt;bool&gt;</span> is-smart-mode: false;
+    <span class="slint-prop">callback</span> mode-toggled();
+    <span class="slint-prop">callback</span> text-edited(string);
+    
+    HorizontalLayout {
+        padding: 12px; spacing: 10px;
+        Image { source: is-smart-mode ? @image-url("sparkles.svg") : @image-url("search.svg"); }
+        TextInput { text &lt;=&gt; root.text; font-size: 16px; }
+        SearchModeSelector { is-smart &lt;=&gt; root.is-smart-mode; }
+    }
+}
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. SearchResultItem (App, File, Folder, Clipboard, Pin, Recent) -->
+          <div class="component-spec-card">
+            <div class="component-spec-header">
+              <div class="component-name-group">
+                <span class="component-title">SearchResultItem (AppItem, FileItem, FolderItem, ClipboardItem)</span>
+                <span class="component-desc">包含图标、高亮匹配标题、副标题路径、徽标与回车芯片</span>
+              </div>
+              <span class="spec-section-badge">List Item</span>
+            </div>
+            <div class="component-spec-body">
+              <div class="component-preview-box">
+                <div style="width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 6px;">
+                  <!-- App Item Preview -->
+                  <div class="search-item selected" style="width: 100%;">
+                    <div class="item-icon-container icon-app"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/></svg></div>
+                    <div class="item-content">
+                      <div class="item-title-row"><span class="item-title">Docker Desktop</span><span class="item-badge">应用</span></div>
+                      <div class="item-subtitle">C:\Program Files\Docker\Docker Desktop.exe</div>
+                    </div>
+                    <div class="item-action-chip" style="display: flex;"><span>Enter</span></div>
+                  </div>
+                  <!-- File Item Preview -->
+                  <div class="search-item" style="width: 100%;">
+                    <div class="item-icon-container icon-file-code"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="14 2 14 8 20 8"/><polyline points="10 13 8 15 10 17"/><polyline points="14 13 16 15 14 17"/></svg></div>
+                    <div class="item-content">
+                      <div class="item-title-row"><span class="item-title">docker-compose.yml</span><span class="item-badge">配置</span></div>
+                      <div class="item-subtitle">D:\Dev\Infrastructure\docker-compose.yml</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="component-code-box">
+<span class="slint-comment">// Slint Blueprint: SearchResultItem.slint</span>
+<span class="slint-tag">export component</span> SearchResultItem {
+    <span class="slint-prop">in property &lt;string&gt;</span> title;
+    <span class="slint-prop">in property &lt;string&gt;</span> subtitle;
+    <span class="slint-prop">in property &lt;string&gt;</span> item-type;
+    <span class="slint-prop">in property &lt;bool&gt;</span> is-selected: false;
+    <span class="slint-prop">callback</span> clicked();
+
+    states [
+        selected when root.is-selected: {
+            background: #ffffff14;
+            indicator.width: 3.5px;
+        }
+    ]
+}
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. PreviewPanel -->
+          <div class="component-spec-card">
+            <div class="component-spec-header">
+              <div class="component-name-group">
+                <span class="component-title">PreviewPanel (详情与操作分栏)</span>
+                <span class="component-desc">右侧文件/应用元数据与快捷操作按钮组 (打开/定位/复制/固定)</span>
+              </div>
+              <span class="spec-section-badge">Split Pane</span>
+            </div>
+            <div class="component-spec-body">
+              <div class="component-preview-box">
+                <div class="preview-panel" style="width: 280px; height: 260px; border: 1px solid var(--acrylic-border); border-radius: 12px;">
+                  <div style="font-weight: 600; font-size: 14px;">EasyNote.md</div>
+                  <div style="font-size: 11px; color: var(--text-tertiary);">Markdown · 34.2 KB</div>
+                  <div class="preview-code-block" style="max-height: 80px;"># EasyNote 本地知识库\nSQLite FTS5 秒搜</div>
+                  <button class="btn-action-primary" style="margin-top: auto; padding: 6px 10px; font-size: 12px;">立即打开</button>
+                </div>
+              </div>
+              <div class="component-code-box">
+<span class="slint-comment">// Slint Blueprint: PreviewPanel.slint</span>
+<span class="slint-tag">export component</span> PreviewPanel {
+    <span class="slint-prop">in property &lt;string&gt;</span> file-path;
+    <span class="slint-prop">in property &lt;string&gt;</span> file-size;
+    <span class="slint-prop">in property &lt;string&gt;</span> snippet-text;
+    <span class="slint-prop">callback</span> open-file();
+    <span class="slint-prop">callback</span> reveal-in-explorer();
+    <span class="slint-prop">callback</span> copy-path();
+}
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. ContextMenu & CommandMenu -->
+          <div class="component-spec-card">
+            <div class="component-spec-header">
+              <div class="component-name-group">
+                <span class="component-title">ContextMenu & CommandMenu</span>
+                <span class="component-desc">支持 Ctrl+K 与右键弹出的浮动操作悬浮层</span>
+              </div>
+              <span class="spec-section-badge">Overlay</span>
+            </div>
+            <div class="component-spec-body">
+              <div class="component-preview-box">
+                <div class="context-menu" style="display: block; position: static; box-shadow: 0 8px 24px rgba(0,0,0,0.4);">
+                  <div class="context-menu-item"><div class="context-menu-item-left"><span>▶</span> 立即打开</div><kbd>Enter</kbd></div>
+                  <div class="context-menu-item"><div class="context-menu-item-left"><span>📁</span> 在文件夹中显示</div><kbd>Ctrl+O</kbd></div>
+                  <div class="context-menu-item"><div class="context-menu-item-left"><span>📌</span> 固定到快速访问</div><kbd>Ctrl+P</kbd></div>
+                </div>
+              </div>
+              <div class="component-code-box">
+<span class="slint-comment">// Slint Blueprint: ContextMenu.slint</span>
+<span class="slint-tag">export component</span> ContextMenu <span class="slint-tag">inherits</span> PopupWindow {
+    <span class="slint-prop">callback</span> action-triggered(string);
+    VerticalLayout {
+        padding: 6px; spacing: 2px;
+        ContextMenuItem { label: "立即打开"; shortcut: "Enter"; }
+        ContextMenuItem { label: "在文件夹中显示"; shortcut: "Ctrl+O"; }
+        ContextMenuItem { label: "复制路径"; shortcut: "Ctrl+C"; }
+    }
+}
+              </div>
+            </div>
+          </div>
+
+          <!-- 6. SettingsPanel -->
+          <div class="component-spec-card">
+            <div class="component-spec-header">
+              <div class="component-name-group">
+                <span class="component-title">SettingsPanel & Dialog</span>
+                <span class="component-desc">设置面板，包含常规、索引、剪贴板与 AI 模型参数配置</span>
+              </div>
+              <span class="spec-section-badge">Modal Window</span>
+            </div>
+            <div class="component-spec-body">
+              <div class="component-preview-box">
+                <div style="background: var(--surface-card); border: 1px solid var(--acrylic-border); border-radius: 12px; padding: 16px; width: 100%; max-width: 380px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div style="font-weight: 600; font-size: 13px;">实时增量索引</div>
+                    <div class="switch-toggle active"><div class="switch-toggle-knob"></div></div>
+                  </div>
+                  <div style="font-size: 11px; color: var(--text-tertiary);">基于 NTFS USN Journal 毫秒级监控本地磁盘文件变更</div>
+                </div>
+              </div>
+              <div class="component-code-box">
+<span class="slint-comment">// Slint Blueprint: SettingsPanel.slint</span>
+<span class="slint-tag">export component</span> SettingsPanel {
+    <span class="slint-prop">in-out property &lt;bool&gt;</span> enable-usn-index: true;
+    <span class="slint-prop">in-out property &lt;bool&gt;</span> enable-clipboard-history: true;
+    <span class="slint-prop">in-out property &lt;bool&gt;</span> enable-ai-smart-search: false;
+}
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Script Modules -->
+  <script src="src/scripts/icons.js?v=20260922_2589"></script>
+  <script src="src/scripts/mockData.js?v=20260922_2589"></script>
+  <script src="src/scripts/app.js?v=20260922_2589"></script>
+</body>
+</html>

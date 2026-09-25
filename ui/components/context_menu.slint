@@ -1,0 +1,123 @@
+// 亚克力右键操作菜单 + 底部轻量 Toast
+import { Theme } from "../styles/tokens.slint";
+import { Icon } from "widgets.slint";
+
+component MenuItemRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> kbd;
+    in property <bool> danger: false;
+    callback clicked;
+    height: 32px;
+    border-radius: 6px;
+    background: ta.has-hover ? (danger ? Theme.danger-soft : Theme.hover) : transparent;
+    animate background { duration: Theme.fast; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        spacing: 10px;
+        Icon { name: root.icon; size: 14px; tint: root.danger ? #fca5a5 : Theme.text-soft; y: 9px; }
+        Text {
+            text: root.label;
+            font-size: 12px;
+            color: root.danger ? #fca5a5 : Theme.text-primary;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        if root.kbd != "" : Rectangle {
+            width: kt.preferred-width + 12px;
+            height: 18px;
+            y: 7px;
+            border-radius: 4px;
+            background: Theme.keycap-bg;
+            border-width: 1px;
+            border-color: Theme.keycap-border;
+            kt := Text {
+                text: root.kbd;
+                font-size: 10px;
+                font-family: Theme.mono;
+                color: Theme.text-soft;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+                width: parent.width;
+                height: parent.height;
+            }
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component ContextMenu inherits Rectangle {
+    in property <string> open-label: "立即打开";
+    in property <string> pin-label: "固定到置顶";
+    in property <string> enter-label: "进入此文件夹查找";
+    in property <bool> is-folder: false;
+    in property <bool> has-path: true;
+    callback action(string);
+    width: 240px;
+    height: body.preferred-height;
+    border-radius: 12px;
+    background: Theme.dark ? #121620b8 : #fcfcfef0;
+    border-width: 1px;
+    border-color: Theme.dark ? #ffffff24 : #0000001a;
+    drop-shadow-blur: 40px;
+    drop-shadow-offset-y: 16px;
+    drop-shadow-color: #00000085;
+    Rectangle { // 上沿高光
+        y: 0px;
+        height: 1px;
+        x: 12px;
+        width: parent.width - 24px;
+        background: Theme.dark ? #ffffff38 : #ffffff;
+    }
+    body := VerticalLayout {
+        padding: 6px;
+        spacing: 1px;
+        Rectangle {
+            height: 26px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 8px;
+                Text { text: "操作菜单"; font-size: 10px; font-weight: 600; color: Theme.text-tertiary; vertical-alignment: center; horizontal-stretch: 1; letter-spacing: 0.5px; }
+                Text { text: "Esc"; font-size: 10px; font-family: Theme.mono; color: Theme.text-muted; vertical-alignment: center; }
+            }
+        }
+        MenuItemRow { icon: "play"; label: root.open-label; kbd: "Enter"; clicked => { root.action("open"); } }
+        if root.has-path : MenuItemRow { icon: "folderOpen"; label: "在资源管理器中显示"; kbd: "Ctrl+O"; clicked => { root.action("reveal"); } }
+        if root.is-folder : MenuItemRow { icon: "folder"; label: root.enter-label; kbd: "Tab"; clicked => { root.action("enter"); } }
+        MenuItemRow { icon: "copy"; label: root.has-path ? "复制完整路径" : "复制内容"; kbd: "Ctrl+C"; clicked => { root.action("copy"); } }
+        MenuItemRow { icon: "pin"; label: root.pin-label; kbd: "Ctrl+P"; clicked => { root.action("pin"); } }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+        MenuItemRow { icon: "trash"; label: "从最近记录中移除"; kbd: "Shift+Del"; danger: true; clicked => { root.action("remove"); } }
+    }
+}
+
+export component Toast inherits Rectangle {
+    in property <string> text;
+    in property <string> icon: "check";
+    in property <bool> shown: false;
+    width: hl.preferred-width + 24px;
+    height: 30px;
+    border-radius: 15px;
+    background: Theme.popover-bg;
+    border-width: 1px;
+    border-color: Theme.border-highlight;
+    drop-shadow-blur: 20px;
+    drop-shadow-offset-y: 8px;
+    drop-shadow-color: #00000066;
+    opacity: shown ? 1 : 0;
+    animate opacity { duration: 180ms; easing: Theme.ease; }
+    hl := HorizontalLayout {
+        x: 12px;
+        spacing: 8px;
+        alignment: center;
+        Icon {
+            name: root.icon;
+            size: 13px;
+            tint: root.icon == "x" || root.icon == "alert" ? #fca5a5 : #93c5fd;
+            y: (root.height - self.height) / 2;
+        }
+        Text { text: root.text; font-size: 12px; color: Theme.text-primary; vertical-alignment: center; }
+    }
+}

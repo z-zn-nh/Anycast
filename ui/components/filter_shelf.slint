@@ -1,0 +1,296 @@
+// 内联筛选抽屉：单行 28px 微晶胶囊（时间 / 类型 / 位置 / 重置）+ 三个亚克力浮层
+import { Theme } from "../styles/tokens.slint";
+import { Icon, TextField } from "widgets.slint";
+import { CalDay, LocationEntry, SelectOption } from "types.slint";
+
+component FilterPill inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> active: false;
+    in property <bool> open: false;
+    callback clicked;
+    callback cleared;
+    height: 24px;
+    width: hl.preferred-width + 16px;
+    border-radius: 4px;
+    background: (active || open) ? Theme.active : (ta.has-hover ? Theme.hover : Theme.subtle);
+    animate background { duration: Theme.fast; }
+    hl := HorizontalLayout {
+        x: 8px;
+        spacing: 5px;
+        alignment: center;
+        Icon { name: root.icon; size: 12px; tint: root.active ? Theme.text-primary : Theme.text-soft; y: 6px; }
+        Text {
+            text: root.label;
+            font-size: 11px;
+            font-weight: root.active ? 600 : 400;
+            color: root.active ? Theme.text-primary : Theme.text-soft;
+            vertical-alignment: center;
+        }
+        if !root.active : Icon { name: "chevronDown"; size: 9px; tint: Theme.text-tertiary; y: 7.5px; }
+        if root.active : Rectangle {
+            width: 14px; height: 14px; y: 5px;
+            border-radius: 7px;
+            background: xta.has-hover ? Theme.hover : transparent;
+            Icon { name: "x"; size: 9px; tint: Theme.text-soft; x: 2.5px; y: 2.5px; }
+            xta := TouchArea { mouse-cursor: pointer; clicked => { root.cleared(); } }
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component FilterShelf inherits Rectangle {
+    in property <bool> open: false;
+    in property <string> time-label: "时间";
+    in property <string> type-label: "类型";
+    in property <string> location-label: "位置";
+    in property <bool> time-active: false;
+    in property <bool> type-active: false;
+    in property <bool> location-active: false;
+    in property <string> open-menu: "";
+    out property <length> time-x: tp.x;
+    out property <length> type-x: yp.x;
+    out property <length> loc-x: lp.x;
+    callback open-group(string);
+    callback clear-group(string);
+    callback reset;
+    height: open ? 30px : 0px;
+    opacity: open ? 1 : 0;
+    animate height { duration: 220ms; easing: Theme.ease; }
+    animate opacity { duration: 180ms; easing: Theme.ease; }
+    clip: true;
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 6px;
+        alignment: start;
+        tp := FilterPill { icon: "clock"; label: root.time-label; active: root.time-active; open: root.open-menu == "time"; clicked => { root.open-group("time"); } cleared => { root.clear-group("time"); } }
+        yp := FilterPill { icon: "file"; label: root.type-label; active: root.type-active; open: root.open-menu == "type"; clicked => { root.open-group("type"); } cleared => { root.clear-group("type"); } }
+        lp := FilterPill { icon: "database"; label: root.location-label; active: root.location-active; open: root.open-menu == "location"; clicked => { root.open-group("location"); } cleared => { root.clear-group("location"); } }
+        if root.time-active || root.type-active || root.location-active : Rectangle {
+            height: 24px;
+            width: rl.preferred-width + 16px;
+            border-radius: 4px;
+            background: rta.has-hover ? Theme.hover : transparent;
+            rl := HorizontalLayout {
+                x: 8px; spacing: 4px; alignment: center;
+                Icon { name: "reset"; size: 11px; tint: Theme.text-soft; y: 6.5px; }
+                Text { text: "重置"; font-size: 11px; color: Theme.text-soft; vertical-alignment: center; }
+            }
+            rta := TouchArea { mouse-cursor: pointer; clicked => { root.reset(); } }
+        }
+    }
+}
+
+// 浮层基底：透光亚克力、无边框、柔和环境阴影
+export component Popover inherits Rectangle {
+    border-radius: 10px;
+    background: Theme.dark ? #14171fe6 : #fcfdfff2;
+    drop-shadow-blur: 32px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #00000080;
+}
+
+component PresetChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked;
+    height: 24px;
+    width: t.preferred-width + 16px;
+    border-radius: 5px;
+    background: active ? (Theme.dark ? #ffffff2e : #0f172a) : (ta.has-hover ? Theme.hover : Theme.subtle);
+    t := Text {
+        text: root.label; font-size: 11px; font-weight: root.active ? 600 : 400;
+        color: root.active && !Theme.dark ? #ffffff : Theme.text-primary;
+        vertical-alignment: center; horizontal-alignment: center; width: parent.width; height: parent.height;
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component CalendarPopover inherits Popover {
+    in property <string> time-preset: "all";
+    in property <string> month-title;
+    in property <[CalDay]> days;
+    in property <string> summary;
+    in property <bool> can-apply: false;
+    callback preset(string);
+    callback prev-month;
+    callback next-month;
+    callback day-clicked(string);
+    callback day-hovered(string);
+    callback clear;
+    callback apply;
+    width: 276px;
+    height: body.preferred-height;
+    body := VerticalLayout {
+        padding: 10px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 4px;
+            alignment: start;
+            PresetChip { label: "全部"; active: root.time-preset == "all"; clicked => { root.preset("all"); } }
+            PresetChip { label: "今天"; active: root.time-preset == "today"; clicked => { root.preset("today"); } }
+            PresetChip { label: "7天内"; active: root.time-preset == "7days"; clicked => { root.preset("7days"); } }
+            PresetChip { label: "30天内"; active: root.time-preset == "30days"; clicked => { root.preset("30days"); } }
+            PresetChip { label: "1年内"; active: root.time-preset == "year"; clicked => { root.preset("year"); } }
+        }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+        HorizontalLayout {
+            spacing: 4px;
+            Rectangle {
+                width: 24px; height: 24px; border-radius: 5px;
+                background: pta.has-hover ? Theme.hover : transparent;
+                Icon { name: "chevronLeft"; size: 12px; tint: Theme.text-soft; x: 6px; y: 6px; }
+                pta := TouchArea { mouse-cursor: pointer; clicked => { root.prev-month(); } }
+            }
+            Text { text: root.month-title; font-size: 12px; font-weight: 600; color: Theme.text-primary; horizontal-alignment: center; vertical-alignment: center; horizontal-stretch: 1; }
+            Rectangle {
+                width: 24px; height: 24px; border-radius: 5px;
+                background: nta.has-hover ? Theme.hover : transparent;
+                Icon { name: "chevronRight"; size: 12px; tint: Theme.text-soft; x: 6px; y: 6px; }
+                nta := TouchArea { mouse-cursor: pointer; clicked => { root.next-month(); } }
+            }
+        }
+        HorizontalLayout {
+            for w in ["一", "二", "三", "四", "五", "六", "日"] : Text {
+                text: w; font-size: 10px; color: Theme.text-muted; horizontal-alignment: center; width: 36px;
+            }
+        }
+        Rectangle {
+            height: Math.ceil(root.days.length / 7) * 30px;
+            for d[i] in root.days : Rectangle {
+                x: Math.mod(i, 7) * 36px + 2px;
+                y: Math.floor(i / 7) * 30px + 1px;
+                width: 32px;
+                height: 28px;
+                border-radius: (d.range-start || d.range-end) ? 6px : 0px;
+                background: (d.range-start || d.range-end) ? (Theme.dark ? #ffffff : #0f172a)
+                    : d.in-range ? (Theme.dark ? #ffffff1f : #0000000f)
+                    : (dta.has-hover ? Theme.hover : transparent);
+                Text {
+                    text: d.day;
+                    font-size: 11px;
+                    font-weight: d.today ? 700 : 400;
+                    color: (d.range-start || d.range-end) ? (Theme.dark ? #0f172a : #ffffff) : d.other-month ? Theme.text-muted : Theme.text-primary;
+                    horizontal-alignment: center; vertical-alignment: center;
+                    width: parent.width; height: parent.height;
+                }
+                if d.today && !(d.range-start || d.range-end) : Rectangle {
+                    width: 3px; height: 3px; border-radius: 1.5px;
+                    x: (parent.width - 3px) / 2; y: parent.height - 5px;
+                    background: Theme.text-primary;
+                }
+                dta := TouchArea {
+                    enabled: !d.other-month;
+                    mouse-cursor: pointer;
+                    clicked => { root.day-clicked(d.date); }
+                    changed has-hover => { if (self.has-hover) { root.day-hovered(d.date); } }
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: root.summary; font-size: 11px; color: Theme.text-tertiary; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            Rectangle {
+                width: 44px; height: 24px; border-radius: 5px;
+                background: cta.has-hover ? Theme.hover : Theme.subtle;
+                Text { text: "清空"; font-size: 11px; color: Theme.text-soft; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                cta := TouchArea { mouse-cursor: pointer; clicked => { root.clear(); } }
+            }
+            Rectangle {
+                width: 44px; height: 24px; border-radius: 5px;
+                opacity: root.can-apply ? 1 : 0.4;
+                background: Theme.dark ? #ffffff29 : #0f172a;
+                Text { text: "应用"; font-size: 11px; font-weight: 600; color: Theme.dark ? #ffffff : #ffffff; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                TouchArea { enabled: root.can-apply; mouse-cursor: pointer; clicked => { root.apply(); } }
+            }
+        }
+    }
+}
+
+component MenuRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> sub;
+    in property <bool> active: false;
+    callback clicked;
+    height: 30px;
+    border-radius: 6px;
+    background: active ? Theme.selected : (ta.has-hover ? Theme.hover : transparent);
+    animate background { duration: Theme.fast; }
+    HorizontalLayout {
+        padding-left: 8px; padding-right: 8px; spacing: 8px;
+        Icon { name: root.icon; size: 13px; tint: Theme.text-soft; y: 8.5px; }
+        Text { text: root.label; font-size: 12px; font-weight: root.active ? 600 : 400; color: Theme.text-primary; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        if root.sub != "" : Text { text: root.sub; font-size: 10px; font-family: Theme.mono; color: Theme.text-muted; vertical-alignment: center; overflow: elide; max-width: 110px; }
+        if root.active : Icon { name: "check"; size: 12px; tint: Theme.text-primary; y: 9px; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component TypePopover inherits Popover {
+    in property <string> value: "all";
+    callback pick(string);
+    width: 200px;
+    height: body.preferred-height;
+    body := VerticalLayout {
+        padding: 6px;
+        spacing: 1px;
+        MenuRow { icon: "layers"; label: "全部类型"; active: root.value == "all"; clicked => { root.pick("all"); } }
+        MenuRow { icon: "app"; label: "应用 (.exe)"; active: root.value == "app"; clicked => { root.pick("app"); } }
+        MenuRow { icon: "fileText"; label: "文档与笔记"; active: root.value == "document"; clicked => { root.pick("document"); } }
+        MenuRow { icon: "fileCode"; label: "代码与工程"; active: root.value == "code"; clicked => { root.pick("code"); } }
+        MenuRow { icon: "image"; label: "图片与媒体"; active: root.value == "media"; clicked => { root.pick("media"); } }
+        MenuRow { icon: "archive"; label: "压缩包"; active: root.value == "archive"; clicked => { root.pick("archive"); } }
+        MenuRow { icon: "folder"; label: "仅文件夹"; active: root.value == "folder"; clicked => { root.pick("folder"); } }
+        MenuRow { icon: "clipboard"; label: "剪贴板历史"; active: root.value == "clipboard"; clicked => { root.pick("clipboard"); } }
+    }
+}
+
+export component LocationPopover inherits Popover {
+    in property <string> value: "all";
+    in property <[LocationEntry]> entries;
+    in-out property <string> filter-text;
+    callback pick(string, string, string);   // id, name, path
+    callback custom(string);
+    callback browse;
+    public function take-focus() { box.take-focus(); }
+    width: 276px;
+    height: body.preferred-height;
+    body := VerticalLayout {
+        padding: 8px;
+        spacing: 4px;
+        box := TextField {
+            text <=> root.filter-text;
+            placeholder: "输入文件夹路径后回车，进入该文件夹检索...";
+            accepted => { if (root.filter-text != "") { root.custom(root.filter-text); } }
+        }
+        Rectangle { height: 2px; }
+        Text { text: "系统磁盘与常用目录"; font-size: 10px; font-weight: 600; color: Theme.text-muted; letter-spacing: 0.5px; }
+        MenuRow { icon: "database"; label: "全盘索引"; active: root.value == "all"; clicked => { root.pick("all", "全盘", ""); } }
+        for e in root.entries : Rectangle {
+            height: e.group == 0 ? 30px : 0px;
+            visible: e.group == 0;
+            MenuRow { icon: e.icon; label: e.name; sub: e.sub; active: root.value == e.id; clicked => { root.pick(e.id, e.name, e.path); } }
+        }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+        Text { text: "常用工作区与工程目录"; font-size: 10px; font-weight: 600; color: Theme.text-muted; letter-spacing: 0.5px; }
+        for e in root.entries : Rectangle {
+            height: e.group == 1 ? 30px : 0px;
+            visible: e.group == 1;
+            MenuRow { icon: "folder"; label: e.name; sub: e.sub; active: root.value == e.id; clicked => { root.pick(e.id, e.name, e.path); } }
+        }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+        Rectangle {
+            height: 30px; border-radius: 6px;
+            background: bta.has-hover ? Theme.hover : transparent;
+            HorizontalLayout {
+                padding-left: 8px; spacing: 8px;
+                Icon { name: "folderOpen"; size: 13px; tint: Theme.text-soft; y: 8.5px; }
+                Text { text: "选择自定义文件夹..."; font-size: 12px; color: Theme.text-primary; vertical-alignment: center; }
+            }
+            bta := TouchArea { mouse-cursor: pointer; clicked => { root.browse(); } }
+        }
+    }
+}

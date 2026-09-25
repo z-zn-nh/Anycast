@@ -1,0 +1,93 @@
+// 分类分段栏：全部 / 文件 / 应用 / 剪贴板 + 剪贴板二级细分（全部 / 纯文本 / 代码 / 链接）
+import { Theme } from "../styles/tokens.slint";
+import { Icon } from "widgets.slint";
+
+component Tab inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> active: false;
+    in property <bool> small: false;
+    callback clicked;
+    // ── 主分类标签：对齐设计稿 .category-tab ──
+    //   height 25px / padding 0 10px / radius 4px / gap 6px / font 12px weight 500
+    //   normal rgba(255,255,255,0.75)  active rgba(255,255,255,0.12)+#fff/600  hover 0.08+#fff
+    // ── 剪贴板二级细分：对齐设计稿 .sub-filter-chip ──
+    //   height 20px / padding 0 8px / radius 9999px（胶囊）/ gap 4px / font 11px
+    //   normal var(--text-tertiary)  active rgba(255,255,255,0.1)+#fff/600  hover 0.06+#fff
+    //   svg opacity 0.7（active 时 1）
+    height: small ? 20px : 25px;
+    width: hl.preferred-width + (small ? 16px : 20px);
+    border-radius: small ? 10px : 4px;
+    // 深色值严格对齐设计稿；浅色用等效的黑系透明度，避免浅色模式下白底失效
+    background: active
+        ? (Theme.dark
+            ? (small ? #ffffff1a : #ffffff1f)
+            : (small ? #0000000d : #0000000f))
+        : (ta.has-hover
+            ? (Theme.dark
+                ? (small ? #ffffff0f : #ffffff14)
+                : (small ? #0000000a : #0000000d))
+            : transparent);
+    animate background { duration: Theme.fast; }
+    hl := HorizontalLayout {
+        x: small ? 8px : 10px;
+        spacing: small ? 4px : 6px;
+        alignment: center;
+        Icon {
+            name: root.icon;
+            size: small ? 11px : 13px;
+            tint: (root.active || ta.has-hover) ? Theme.text-primary
+                : (small ? Theme.text-tertiary : Theme.text-soft);
+            opacity: small && !root.active ? 0.7 : 1;
+            y: (root.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            font-size: small ? 11px : 12px;
+            // 设计稿：主标签常态 500；二级细分常态继承 400，激活态统一 600
+            font-weight: root.active ? 600 : (small ? 400 : 500);
+            color: (root.active || ta.has-hover) ? Theme.text-primary
+                : (small ? Theme.text-tertiary : Theme.text-soft);
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component CategoryBar inherits Rectangle {
+    in property <string> category: "all";
+    in property <string> clip-sub: "all";
+    callback set-category(string);
+    callback set-clip-sub(string);
+    // 对齐设计稿：容器 height 32px / padding 0 16px（分类展开剪贴板子标签时增高）
+    height: category == "clipboard" ? 60px : 32px;
+    animate height { duration: 160ms; easing: Theme.ease; }
+    clip: true;
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 3px;
+        spacing: 4px;
+        HorizontalLayout {
+            // 设计稿 .category-tabs { gap: 4px }
+            spacing: 4px;
+            alignment: start;
+            Tab { label: "全部"; icon: "search"; active: root.category == "all"; clicked => { root.set-category("all"); } }
+            Tab { label: "文件"; icon: "file"; active: root.category == "file"; clicked => { root.set-category("file"); } }
+            Tab { label: "应用"; icon: "app"; active: root.category == "app"; clicked => { root.set-category("app"); } }
+            Tab { label: "剪贴板"; icon: "clipboard"; active: root.category == "clipboard"; clicked => { root.set-category("clipboard"); } }
+        }
+        if root.category == "clipboard" : HorizontalLayout {
+            // 设计稿 .clipboard-sub-filter-bar：height 26px / padding 0 16px
+            //   其内 .sub-filter-chips { gap: 4px }，chip 20px 垂直居中（上下各 3px）
+            //   （bar 自身的 gap 6px 是留给「细分:」标题的，HTML 里未使用该标题）
+            padding-top: 3px;
+            spacing: 4px;
+            alignment: start;
+            Tab { small: true; label: "全部"; icon: "layers"; active: root.clip-sub == "all"; clicked => { root.set-clip-sub("all"); } }
+            Tab { small: true; label: "纯文本"; icon: "textLines"; active: root.clip-sub == "text"; clicked => { root.set-clip-sub("text"); } }
+            Tab { small: true; label: "代码"; icon: "code"; active: root.clip-sub == "code"; clicked => { root.set-clip-sub("code"); } }
+            Tab { small: true; label: "链接"; icon: "link"; active: root.clip-sub == "url"; clicked => { root.set-clip-sub("url"); } }
+        }
+    }
+}

@@ -1,0 +1,368 @@
+// 通用微晶控件：图标、Squircle 图标容器、幽灵按钮、Fluent 开关、键帽、下拉选择、输入框
+import { Theme } from "../styles/tokens.slint";
+import { Icons } from "../styles/icons.slint";
+import { SelectOption } from "types.slint";
+
+export component Icon inherits Image {
+    in property <string> name;
+    in property <length> size: 14px;
+    in property <color> tint: Theme.text-secondary;
+    width: size;
+    height: size;
+    source: Icons.pick(name);
+    colorize: tint;
+    image-fit: contain;
+}
+
+// Tinycast / Raycast 风格渐变 Squircle 图标
+export component Squircle inherits Rectangle {
+    in property <string> icon: "app";
+    in property <length> size: 28px;
+    width: size;
+    height: size;
+    // 对齐设计稿 .squircle-icon { border-radius: 8px }（固定值，不随尺寸缩放）
+    border-radius: 8px;
+    border-width: 1px;
+    // 对齐设计稿 .squircle-icon { border: 1px solid rgba(255,255,255,0.14) }
+    //   + .squircle-terminal { border-color: rgba(56,189,248,0.35) }（终端类走青边）
+    border-color: icon == "terminal" ? #38bdf859 : #ffffff24;
+    background: icon == "vscode" ? @linear-gradient(135deg, #007acc 0%, #005a9e 100%)
+        : icon == "docker" ? @linear-gradient(135deg, #0db7ed 0%, #0284c7 100%)
+        : icon == "globe" ? @linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)
+        : icon == "terminal" ? @linear-gradient(135deg, #1e293b 0%, #0f172a 100%)
+        : icon == "folder" ? @linear-gradient(135deg, #f59e0b 0%, #d97706 100%)
+        : icon == "fileText" ? @linear-gradient(135deg, #0284c7 0%, #0369a1 100%)
+        : icon == "fileCode" ? @linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)
+        : icon == "image" ? @linear-gradient(135deg, #ec4899 0%, #be185d 100%)
+        : icon == "media" ? @linear-gradient(135deg, #f43f5e 0%, #be123c 100%)
+        : icon == "archive" ? @linear-gradient(135deg, #a16207 0%, #713f12 100%)
+        : icon == "clipboard" ? @linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)
+        : icon == "link" ? @linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)
+        : @linear-gradient(135deg, #475569 0%, #334155 100%);
+    drop-shadow-blur: 6px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: #00000040;
+    // 软件渲染器不支持 box-shadow，设计稿 .squircle-icon 的
+    // `inset 0 1px 0 rgba(255,255,255,0.25)` 顶沿高光用 1px 亮线等效。
+    // 少了它，图标块会明显发闷、和设计稿的「抛光玻璃」质感差一截。
+    Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: 1px;
+        background: #ffffff40;
+    }
+    Icon {
+        name: root.icon;
+        size: root.size * 0.58;
+        tint: root.icon == "terminal" ? #38bdf8 : #ffffff;
+        x: (root.size - self.width) / 2;
+        y: (root.size - self.height) / 2;
+    }
+}
+
+// 无框幽灵图标按钮
+export component GhostButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <length> icon-size: 13px;
+    in property <color> tint: Theme.text-soft;
+    in property <color> hover-tint: Theme.text-primary;
+    in property <color> hover-bg: Theme.hover;
+    in property <bool> active: false;
+    in property <string> tooltip;
+    in property <length> padding-x: label == "" ? 4px : 8px;
+    // 可覆盖尺寸（默认值为通用值，各使用处按设计稿传值）：
+    //   底栏 .footer-btn         → 24px 高 / radius 4px / gap 5px / 11.5px
+    //   设置面板 .hotkey-action-btn → 28px 高 / radius 6px / padding-x 7.5px
+    in property <length> btn-height: 26px;
+    in property <length> btn-radius: 6px;
+    in property <length> gap: 6px;
+    in property <length> font-size: 12px;
+    callback clicked;
+    height: btn-height;
+    width: layout.preferred-width + padding-x * 2;
+    border-radius: btn-radius;
+    background: active ? Theme.active : ta.has-hover ? hover-bg : transparent;
+    animate background { duration: Theme.fast; }
+    layout := HorizontalLayout {
+        x: root.padding-x;
+        spacing: root.gap;
+        alignment: center;
+        if root.icon != "" : Icon {
+            name: root.icon;
+            size: root.icon-size;
+            tint: (ta.has-hover || root.active) ? root.hover-tint : root.tint;
+            y: (root.height - self.height) / 2;
+        }
+        if root.label != "" : Text {
+            text: root.label;
+            font-size: root.font-size;
+            color: (ta.has-hover || root.active) ? root.hover-tint : root.tint;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Windows 11 Fluent 开关（40×20）
+export component FluentSwitch inherits Rectangle {
+    in-out property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+    width: 40px;
+    height: 20px;
+    border-radius: 10px;
+    border-width: checked ? 0px : 1px;
+    border-color: Theme.dark ? #ffffff59 : #00000059;
+    background: checked ? Theme.switch-on : (ta.has-hover ? Theme.subtle : transparent);
+    opacity: enabled ? 1 : 0.5;
+    animate background { duration: 160ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
+    knob := Rectangle {
+        width: root.checked ? 14px : 12px;
+        height: self.width;
+        border-radius: self.width / 2;
+        x: root.checked ? root.width - self.width - 3px : 4px;
+        y: (root.height - self.height) / 2;
+        background: root.checked ? Theme.knob-on : (Theme.dark ? #ffffffbf : #0f172abf);
+        drop-shadow-blur: root.checked ? 4px : 0px;
+        drop-shadow-color: #00000059;
+        animate x, width { duration: 160ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}
+
+// 3D 机械质感键帽
+export component Keycap inherits Rectangle {
+    in property <string> label;
+    in property <bool> recording: false;
+    in property <bool> small: false;
+    height: small ? 20px : 26px;
+    width: t.preferred-width + (small ? 12px : 18px);
+    border-radius: 6px;
+    background: recording ? Theme.danger-soft : Theme.keycap-bg;
+    border-width: 1px;
+    border-color: recording ? Theme.danger : Theme.keycap-border;
+    bottom := Rectangle {
+        y: root.height - 2px;
+        height: 2px;
+        width: root.width - 8px;
+        x: 4px;
+        border-radius: 1px;
+        background: root.recording ? Theme.danger : Theme.keycap-bottom;
+    }
+    t := Text {
+        text: root.label;
+        font-size: small ? 11px : 12px;
+        font-family: Theme.mono;
+        font-weight: 600;
+        color: root.recording ? #fca5a5 : Theme.text-primary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2 - 1px;
+        opacity: root.recording ? 0.55 + 0.45 * Math.abs(Math.sin(animation-tick() / 1200ms * 180deg)) : 1;
+    }
+}
+
+// 下拉选择（微晶弹层）
+export component PillSelect inherits Rectangle {
+    in property <[SelectOption]> options;
+    in-out property <string> value;
+    in property <length> menu-width: 220px;
+    callback changed(string);
+    in property <string> label;
+    property <string> picked-label;
+    changed value => { root.picked-label = ""; }
+    property <string> current-label: picked-label != "" ? picked-label : (label != "" ? label : value);
+    height: 28px;
+    width: lbl.preferred-width + 34px;
+    border-radius: 6px;
+    background: ta.has-hover ? Theme.hover : Theme.subtle;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    animate background { duration: Theme.fast; }
+    lbl := Text {
+        x: 10px;
+        text: root.current-label;
+        font-size: 12px;
+        color: Theme.text-primary;
+        vertical-alignment: center;
+        height: root.height;
+    }
+    Icon {
+        name: "chevronDown";
+        size: 11px;
+        tint: Theme.text-tertiary;
+        x: root.width - 20px;
+        y: (root.height - self.height) / 2;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { popup.show(); }
+    }
+    popup := PopupWindow {
+        x: root.width - root.menu-width;
+        y: root.height + 4px;
+        width: root.menu-width;
+        Rectangle {
+            background: Theme.popover-bg;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000073;
+            drop-shadow-offset-y: 10px;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 2px;
+                for opt in root.options : Rectangle {
+                    height: 30px;
+                    border-radius: 6px;
+                    background: ota.has-hover ? Theme.hover : (opt.value == root.value ? Theme.selected : transparent);
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        Text {
+                            text: opt.label;
+                            font-size: 12px;
+                            color: Theme.text-primary;
+                            font-weight: opt.value == root.value ? 600 : 400;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        if opt.value == root.value : Icon { name: "check"; size: 12px; tint: Theme.text-primary; y: 9px; }
+                    }
+                    ota := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.picked-label = opt.label;
+                            root.value = opt.value;
+                            root.changed(opt.value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 微晶输入框
+export component TextField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> mono: false;
+    callback edited(string);
+    callback accepted();
+    public function take-focus() { input.focus(); }
+    height: 30px;
+    border-radius: 6px;
+    background: input.has-focus ? Theme.hover : Theme.subtle;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.border-highlight : Theme.border-subtle;
+    animate background, border-color { duration: Theme.fast; }
+    clip: true;
+    if root.text == "" : Text {
+        x: 10px;
+        width: root.width - 20px;
+        text: root.placeholder;
+        color: Theme.text-placeholder;
+        font-size: 12px;
+        vertical-alignment: center;
+        height: root.height;
+    }
+    input := TextInput {
+        x: 10px;
+        width: root.width - 20px;
+        height: root.height;
+        text <=> root.text;
+        font-size: 12px;
+        font-family: root.mono ? Theme.mono : Theme.font;
+        color: Theme.text-primary;
+        single-line: true;
+        vertical-alignment: center;
+        selection-background-color: #3b82f680;
+        edited => { root.edited(self.text); }
+        accepted => { root.accepted(); }
+    }
+    TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
+}
+
+// 圆角小标签（分类徽标）
+export component Badge inherits Rectangle {
+    in property <string> text;
+    // 对齐设计稿 .item-badge { color: rgba(255,255,255,0.65) }
+    in property <color> tint: Theme.dark ? #ffffffa6 : #000000a6;
+    height: 18px;
+    width: t.preferred-width + 12px;
+    border-radius: 4px;
+    background: Theme.dark ? #ffffff14 : #0000000f;
+    t := Text {
+        text: root.text;
+        font-size: 10px;
+        // 对齐设计稿 .item-badge { font-weight: 500 }
+        font-weight: 500;
+        color: root.tint;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        x: 6px;
+        height: root.height;
+    }
+}
+
+// 微晶主按钮 / 次按钮
+export component ActionButton inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 30px;
+    width: hl.preferred-width + 24px;
+    border-radius: 6px;
+    opacity: enabled ? 1 : 0.45;
+    background: danger ? (ta.has-hover ? Theme.danger-soft : #ef44441f)
+        : primary ? (ta.has-hover ? (Theme.dark ? #ffffff2e : #0f172a) : (Theme.dark ? #ffffff1f : #0f172ae6))
+        : (ta.has-hover ? Theme.hover : Theme.subtle);
+    border-width: 1px;
+    border-color: danger ? #ef444459 : Theme.border-subtle;
+    animate background { duration: Theme.fast; }
+    hl := HorizontalLayout {
+        x: 12px;
+        spacing: 6px;
+        alignment: center;
+        if root.icon != "" : Icon {
+            name: root.icon;
+            size: 12px;
+            tint: root.danger ? #fca5a5 : (root.primary && !Theme.dark) ? #ffffff : Theme.text-primary;
+            y: (root.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            color: root.danger ? #fca5a5 : (root.primary && !Theme.dark) ? #ffffff : Theme.text-primary;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

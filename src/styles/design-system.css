@@ -1,0 +1,230 @@
+/**
+ * Anycast Design System - Spec Showcase Board & Slint Blueprint Styles (Refined & Minimal)
+ */
+
+.design-system-view {
+  display: none;
+  position: absolute;
+  inset: 58px 0 0 0;
+  background: var(--bg-app);
+  overflow-y: auto;
+  padding: 24px 36px;
+  z-index: 60;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+.design-system-view::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.spec-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-bottom: 48px;
+}
+
+.spec-hero {
+  border-bottom: 1px solid var(--acrylic-border-subtle);
+  padding-bottom: 16px;
+}
+
+.spec-hero h1 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spec-hero p {
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  max-width: 760px;
+  line-height: 1.5;
+}
+
+.spec-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.spec-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--acrylic-border-subtle);
+  padding-bottom: 8px;
+}
+
+.spec-section-title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spec-section-badge {
+  font-size: 10.5px;
+  background: var(--accent-subtle);
+  color: var(--accent-primary);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--accent-primary);
+  font-weight: 500;
+}
+
+/* Tokens Grid */
+.tokens-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.token-card {
+  background: var(--surface-card);
+  border: 1px solid var(--acrylic-border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.token-swatch {
+  height: 40px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--acrylic-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: #fff;
+}
+
+.token-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--font-size-xs);
+}
+
+.token-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.token-val {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* 22 Slint Components Gallery */
+.components-gallery {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.component-spec-card {
+  background: var(--surface-card);
+  border: 1px solid var(--acrylic-border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.component-spec-header {
+  background: var(--acrylic-bg-hover);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--acrylic-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.component-name-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.component-title {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.component-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.component-spec-body {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  min-height: 180px;
+}
+
+@media (max-width: 900px) {
+  .component-spec-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.component-preview-box {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: var(--bg-app);
+  border-right: 1px solid var(--acrylic-border-subtle);
+  position: relative;
+}
+
+.component-code-box {
+  background: #0d1117;
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #c9d1d9;
+  overflow-x: auto;
+  line-height: 1.5;
+  scrollbar-width: none !important;
+}
+
+.component-code-box::-webkit-scrollbar {
+  display: none !important;
+}
+
+.slint-tag {
+  color: #7ee787;
+  font-weight: 600;
+}
+
+.slint-prop {
+  color: #79c0ff;
+}
+
+.slint-val {
+  color: #a5d6ff;
+}
+
+.slint-comment {
+  color: #8b949e;
+  font-style: italic;
+}

@@ -1,0 +1,154 @@
+// 置顶展架：固定 86×84 图标卡片，单行横向轨道，鼠标滚轮横向滚动，0 抖动折叠
+import { Theme } from "../styles/tokens.slint";
+import { Icon, Squircle, Badge } from "widgets.slint";
+import { ResultItem } from "types.slint";
+
+export component PinnedShelf inherits Rectangle {
+    in property <[ResultItem]> items;
+    in-out property <bool> collapsed: false;
+    in property <int> selected: -1;
+    callback toggle();
+    callback select(int);
+    callback activate(int);
+    callback context(int, length, length);
+
+    property <length> min-x: Math.min(0px, fl.width - fl.content-width);
+    height: 28px + (collapsed ? 0px : 94px);
+    animate height { duration: 220ms; easing: Theme.ease; }
+    clip: true;
+
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 4px;
+        spacing: 0px;
+        // 标题行（刚性 20px，折叠展开绝对 0 位移）
+        Rectangle {
+            height: 20px;
+            HorizontalLayout {
+                spacing: 6px;
+                Icon { name: "pin"; size: 12px; tint: Theme.text-soft; y: 4px; }
+                Text {
+                    text: "置顶";
+                    // 设计稿 .pinned-shelf-header { font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,0.9) }
+                    font-size: 11.5px;
+                    font-weight: 600;
+                    color: Theme.dark ? #ffffffe6 : #000000e6;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Rectangle {
+                    width: 20px;
+                    height: 20px;
+                    background: transparent;
+                    Icon {
+                        name: root.collapsed ? "chevronDown" : "chevronUp";
+                        size: 12px;
+                        tint: tta.has-hover ? Theme.text-primary : Theme.text-soft;
+                        x: 4px;
+                        y: 4px;
+                    }
+                    tta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle(); } }
+                }
+            }
+        }
+        Rectangle {
+            height: root.collapsed ? 0px : 90px;
+            opacity: root.collapsed ? 0 : 1;
+            animate height { duration: 220ms; easing: Theme.ease; }
+            animate opacity { duration: 180ms; easing: Theme.ease; }
+            clip: true;
+            // 空状态：优雅虚线槽，垂直居中，替代此前生硬贴顶的大灰字
+            if root.items.length == 0 : Rectangle {
+                height: 84px;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                background: transparent;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 8px;
+                    Icon { name: "plus"; size: 13px; tint: Theme.text-muted; }
+                    Text {
+                        text: "右键任意条目选择「固定到置顶」，或按 Ctrl+P";
+                        font-size: 11px;
+                        color: Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            wheel := TouchArea {
+                scroll-event(ev) => {
+                    fl.content-x = Math.max(root.min-x, Math.min(0px, fl.content-x - ev.delta-y - ev.delta-x));
+                    return accept;
+                }
+                fl := Flickable {
+                    interactive: false;
+                    content-width: Math.max(self.width, root.items.length * 94px);
+                    content-height: 90px;
+                    HorizontalLayout {
+                        y: 4px;
+                        spacing: 8px;
+                        alignment: start;
+                        for item[i] in root.items : Rectangle {
+                            width: 86px;
+                            height: 84px;
+                            border-radius: 6px;
+                            background: root.selected == i ? Theme.selected : (cta.has-hover ? Theme.hover : transparent);
+                            animate background { duration: Theme.fast; }
+                            VerticalLayout {
+                                padding-top: 9px;
+                                padding-bottom: 6px;
+                                spacing: 5px;
+                                alignment: start;
+                                Squircle { icon: item.icon; size: 34px; x: (86px - 34px) / 2; }
+                                Text {
+                                    text: item.title;
+                                    // 设计稿 .pinned-card-title { font-size: 11.5px; font-weight: 500;
+                                    //   line-height: 15px; text-shadow: 0 1px 2px rgba(0,0,0,0.4) }
+                                    // 注：Slint 无 text-shadow，该项属渲染后端能力差距，见 6.7。
+                                    font-size: 11.5px;
+                                    font-weight: 500;
+                                    color: Theme.text-primary;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                    width: 78px;
+                                    x: 4px;
+                                }
+                                // 设计稿 .pinned-card-badge：9.5px / text-tertiary /
+                                //   bg rgba(255,255,255,0.06) / padding 1px 5px / radius 3px / margin-top 3px
+                                // 此前实现成了裸文本（无胶囊底），与设计稿观感差异明显。
+                                Rectangle {
+                                    height: 14px;
+                                    width: bdg.preferred-width + 10px;
+                                    x: (86px - self.width) / 2;
+                                    border-radius: 3px;
+                                    background: Theme.dark ? #ffffff0f : #0000000f;
+                                    bdg := Text {
+                                        text: item.badge;
+                                        font-size: 9.5px;
+                                        color: Theme.text-tertiary;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: center;
+                                        width: parent.width;
+                                        height: parent.height;
+                                    }
+                                }
+                            }
+                            cta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.select(i); }
+                                double-clicked => { root.activate(i); }
+                                pointer-event(ev) => {
+                                    if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.down) {
+                                        root.context(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
