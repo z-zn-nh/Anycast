@@ -331,6 +331,15 @@ pub fn type_extensions(category: &str) -> Option<&'static [&'static str]> {
             "avi", "webm", "mp3", "wav", "flac", "aac", "ogg", "m4a",
         ]),
         "archive" => Some(&["zip", "7z", "rar", "tar", "gz", "bz2", "xz", "iso", "cab"]),
+        // 「图片」是 `media` 的精确子集。判断模型的 `image` 槽位（"图片、照片、截图"）
+        // 需要它才能真的过滤 —— 否则 `item_in_scope` 走 `_ => None` 分支，
+        // 命中 `unwrap_or(true)` 而**静默放行全部文件**（比不筛还糟：看着像筛过了）。
+        "image" => Some(&[
+            "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "heic", "tif", "tiff", "avif",
+        ]),
+        // 同上：判断模型的 `executable` 槽位（"可执行程序、exe、安装包"）。
+        // 注意这与 scope 里的 `app`（开始菜单扫描出的应用）**不是一回事**。
+        "executable" => Some(&["exe", "msi", "com", "msix", "appx"]),
         _ => None,
     }
 }

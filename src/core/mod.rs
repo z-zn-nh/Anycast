@@ -11,7 +11,9 @@ pub mod settings;
 pub mod storage;
 pub mod win_thread;
 
-use crate::models::{BackendNotification, HotkeyBindingModel, ItemType, SearchItemModel, SearchRequest, SearchResponse};
+use crate::models::{
+    BackendNotification, HotkeyBindingModel, IntentChip, ItemType, SearchItemModel, SearchMode, SearchRequest, SearchResponse,
+};
 use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
 use search::{SearchEngine, SearchProvider};
@@ -178,7 +180,47 @@ impl AppCore {
     // 搜索
     // ------------------------------------------------------------------
     pub fn search(&self, req: &SearchRequest) -> SearchResponse {
-        self.engine.search(req)
+        // 闸门 1 是同步的（< 1 ms），且搜索本身已经跑在后台线程上
+        // （见 `gui::refresh_search`），所以这里直接调用不阻塞 UI。
+        //
+        // 只对**智能模式**做桥接：快速模式是「敲什么搜什么」的原始通道，
+        // 不该被自动加筛选条件。
+        if req.mode != SearchMode::Smart {
+            return self.engine.search(req);
+        }
+        let mut req = req.clone();
+        let chips = self.apply_decision_slots(&mut req);
+        let mut resp = self.engine.search(&req);
+
+        if !chips.is_empty() {
+            // 桥接层给出的维度以它为准：`search::parse_intent` 是独立跑的，
+            // 不看 scope，所以它仍会为同一些维度产出芯片。
+            // 不剔掉就会同时显示「类型：图片与媒体」和「类型：图片」——
+            // 两条互相矛盾的提示，比没有提示更糟。
+            let owned: Vec<&str> = chips.iter().map(|c| c.key.as_str()).collect();
+            resp.intent_chips.retain(|c| !owned.contains(&c.key.as_str()));
+            resp.intent_chips.splice(0..0, chips);
+        }
+        resp
+    }
+
+    /// 把判断模型的槽位落到 `req.scope` 上，返回它认领的芯片。
+    ///
+    /// 这是「判断模型」在生产链路上的**唯一**入口 ——
+    /// 埋点也在这里顺带记上（`analyze` 内部记录），
+    /// 所以语言分布统计从这一刻起才真的开始积累。
+    fn apply_decision_slots(&self, req: &mut SearchRequest) -> Vec<IntentChip> {
+        if req.query.trim().is_empty() {
+            return Vec::new();
+        }
+        let s = self.settings.read().clone();
+        let analysis = self.decision.analyze(&req.query, &s);
+        // 模型明确说「这不是在找东西」（闲聊 / 生成任务）时，别加筛选条件 ——
+        // 那类输入本来就会回落到常规检索，硬筛只会把结果清空。
+        if !analysis.intent.is_search {
+            return Vec::new();
+        }
+        decision::bridge::apply(&analysis.intent, &mut req.scope)
     }
 
     pub fn recent_items(&self) -> Vec<SearchItemModel> {

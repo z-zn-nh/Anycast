@@ -120,9 +120,19 @@ impl SearchScopeFilter {
         }
     }
 
+    /// 解析时间上限（Unix 秒）。
+    ///
+    /// ⚠️ **`custom_end_time` 的约定是「当天 23:59:59」，即上限本身已经含当天。**
+    ///
+    /// 这里曾经写过 `e + 86_399`，是给日历选择器的 `to_ts(e)`（当天 **零点**）
+    /// 打的补丁 —— 但 `search::parse_intent` 传进来的 `day_range()` 已经是
+    /// 当天 23:59:59，再补一次就**多算一整天**：实测「昨天」会把今天改过的文件
+    /// 也算进来。两处调用方约定不一致，补丁只能打在调用方。
+    ///
+    /// 回归测试：`tests::time_upper_bound_includes_end_day`
     pub fn time_upper_bound(&self) -> Option<i64> {
         if self.time_preset == "range" {
-            self.custom_end_time.map(|e| e + 86_399)
+            self.custom_end_time
         } else {
             None
         }
@@ -201,4 +211,59 @@ pub enum BackendNotification {
     IndexProgress { files: u64, content_files: u64, done: bool },
     ToastMessage { text: String, icon: String },
     WakeRequested,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DAY: i64 = 86_400;
+
+    /// 回归：`custom_end_time` 约定为「含当天的 23:59:59」，不能再补一天。
+    ///
+    /// 这个补丁曾经让「昨天」把今天改过的文件也算进来（见 `time_upper_bound` 注释）。
+    #[test]
+    fn time_upper_bound_includes_end_day() {
+        let end_of_day = 1_700_000_000 / DAY * DAY + DAY - 1;
+        let scope = SearchScopeFilter {
+            time_preset: "range".into(),
+            custom_start_time: Some(end_of_day - 3 * DAY),
+            custom_end_time: Some(end_of_day),
+            ..Default::default()
+        };
+        assert_eq!(scope.time_upper_bound(), Some(end_of_day));
+    }
+
+    #[test]
+    fn time_bounds_are_none_outside_range_preset() {
+        let scope = SearchScopeFilter { time_preset: "today".into(), ..Default::default() };
+        assert_eq!(scope.time_upper_bound(), None);
+        // "today" 的下限由 today_start 决定，与 custom_* 无关
+        assert_eq!(scope.time_lower_bound(1_700_000_000, 1_699_900_000), Some(1_699_900_000));
+    }
+
+    /// 区间两端都取得到：恰好落在上限的文件不该被滤掉。
+    #[test]
+    fn range_is_closed_at_both_ends() {
+        let start = 1_700_000_000 / DAY * DAY;
+        let end = start + DAY - 1;
+        let scope = SearchScopeFilter {
+            time_preset: "range".into(),
+            custom_start_time: Some(start),
+            custom_end_time: Some(end),
+            ..Default::default()
+        };
+        let lower = scope.time_lower_bound(end, start).unwrap();
+        let upper = scope.time_upper_bound().unwrap();
+        assert!(lower <= start, "起点必须落在区间内");
+        assert!(upper >= end, "终点必须落在区间内");
+    }
+
+    #[test]
+    fn is_active_ignores_default_values() {
+        let mut scope = SearchScopeFilter { time_preset: "all".into(), type_category: "all".into(), location_scope: "all".into(), ..Default::default() };
+        assert!(!scope.is_active());
+        scope.type_category = "code".into();
+        assert!(scope.is_active());
+    }
 }

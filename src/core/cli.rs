@@ -298,9 +298,46 @@ fn print_intent(it: &crate::core::decision::Intent) {
     println!("    类型          {}（{}）", it.type_slot.label_cn(), it.type_slot.as_str());
     println!("    时间          {}（{}）", it.time_slot.label_cn(), it.time_slot.as_str());
     println!("    位置          {}（{}）", it.location_slot.label_cn(), it.location_slot.as_str());
+    if let Some(key) = it.location_scope.as_deref() {
+        println!("    位置范围键    {key}");
+    }
     println!("    是搜索        {}", yn(it.is_search));
     println!("    是自然语言    {}", yn(it.is_natural));
     println!("    置信度        {:.2}", it.confidence);
+}
+
+/// 打印槽位落到检索范围上的结果。
+///
+/// 这是判断模型**唯一**影响实际结果的路径 ——
+/// 槽位解析得再对，没落到 `SearchScopeFilter` 上就等于没做。
+fn print_bridged_scope(it: &crate::core::decision::Intent) {
+    let mut scope = crate::models::SearchScopeFilter::default();
+    let chips = crate::core::decision::bridge::apply(it, &mut scope);
+
+    if chips.is_empty() {
+        println!("    （不改变范围：槽位为空，或用户已显式筛选）");
+        return;
+    }
+    for c in &chips {
+        println!("    {:<4}          {}", c.key, c.val);
+    }
+    println!("    → 类型        {}", dash(&scope.type_category));
+    println!("    → 时间        {}", dash(&scope.time_preset));
+    if let Some(s) = scope.custom_start_time {
+        println!("      起点        {}", fmt_ts(s));
+    }
+    if let Some(e) = scope.custom_end_time {
+        println!("      终点        {}", fmt_ts(e));
+    }
+    println!("    → 位置        {}", dash(&scope.location_scope));
+}
+
+fn dash(s: &str) -> String {
+    if s.is_empty() {
+        "（不限）".into()
+    } else {
+        s.to_string()
+    }
 }
 
 /// 打印一次查询的完整解析链路。
@@ -348,6 +385,9 @@ fn run_decide(storage: &Arc<Storage>, query: &str, cloud: bool) {
             to.map(fmt_ts).unwrap_or_else(|| "不限".into())
         );
     }
+
+    println!("\n  落到检索范围（bridge）");
+    print_bridged_scope(&a.intent);
 
     if cloud {
         println!("\n  云端 Jev（闸门 3）");

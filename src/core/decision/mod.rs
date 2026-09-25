@@ -24,6 +24,7 @@
 //! 三条硬性规则：**首屏永远由本地检索提供**、**失败静默降级**、
 //! **纯关键词永不触发闸门 2/3**。
 
+pub mod bridge;
 pub mod hub;
 pub mod jev;
 pub mod rule;
@@ -169,6 +170,12 @@ pub struct Intent {
     pub type_slot: TypeSlot,
     pub time_slot: TimeSlot,
     pub location_slot: LocationSlot,
+    /// 位置的具体范围键，**只有规则后端能给**（云端只回枚举）。
+    ///
+    /// 取值与 UI 位置菜单 id 同构：`drive-c` / `drive-d` / `desktop` / `downloads`，
+    /// 可直接塞进 `SearchScopeFilter::location_scope`。
+    /// `LocationSlot::Current` 永远是 `None`（无头状态下无从得知「当前」是哪个目录）。
+    pub location_scope: Option<String>,
     /// 各槽位置信度的最小值 —— 用于决定是否升级到下一级闸门
     pub confidence: f32,
     pub backend: &'static str,
@@ -236,6 +243,9 @@ impl Intent {
             type_slot,
             time_slot,
             location_slot,
+            // 具体范围键不进 `slot_confs` —— 它是 `location` 的**补充**，
+            // 与 `location` 同一次判定，重复计入会把置信度算成「两票」。
+            location_scope: choice("location_scope").map(|(c, _)| c.to_string()),
             confidence,
             backend,
         }

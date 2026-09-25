@@ -76,7 +76,8 @@ const TIME_RULES: &[(TimeSlot, &[&str])] = &[
 ];
 
 /// 位置：只用**明确**的位置词，避免与类型词打架（「文档」是类型，「文档目录」才是位置）
-const LOCATION_COMMON: &[&str] = &["桌面", "下载", "desktop", "download"];
+///
+/// 常用目录表见 [`common_scope`]（那张表要连范围键一起给，所以没放这儿）。
 const LOCATION_CURRENT: &[&str] = &["当前目录", "这个文件夹", "这个目录", "这里", "current folder"];
 
 /// 明显的**非检索**输入（闲聊 / 生成任务）
@@ -152,8 +153,13 @@ pub fn solve(query: &str) -> Answers {
     if let Some((slot, conf)) = first_hit(&lower, TIME_RULES) {
         put("time", slot.as_str(), conf);
     }
-    if let Some((slot, conf)) = solve_location(query, &lower) {
+    if let Some((slot, conf, scope_key)) = solve_location(query, &lower) {
         put("location", slot.as_str(), conf);
+        // 具体范围（`drive-d` / `desktop` / …），只有规则后端能给 ——
+        // 云端只回枚举，所以这是 `Intent::location_scope` 的唯一来源。
+        if let Some(key) = scope_key {
+            put("location_scope", &key, conf);
+        }
     }
     drop(put);
 
@@ -189,23 +195,47 @@ fn first_hit<T: Copy>(lower: &str, rules: &[(T, &[&str])]) -> Option<(T, f32)> {
 }
 
 /// 位置判定：先认盘符（最明确），再认当前目录，最后认常用目录。
+///
+/// 返回 `(槽位, 置信度, 可直接消费的范围键)`。
+/// 范围键与 UI 位置菜单的 id 同构（`drive-d` / `desktop` / `downloads`），
+/// 能直接塞进 `SearchScopeFilter::location_scope`，由 storage 解析成真实路径。
 /// 都没命中返回 `None` —— 交给调用方回落到「不限」。
-fn solve_location(raw: &str, lower: &str) -> Option<(LocationSlot, f32)> {
+fn solve_location(raw: &str, lower: &str) -> Option<(LocationSlot, f32, Option<String>)> {
     // 盘符：`D盘` / `d 盘` / `C:\` / `E:/`
-    if has_drive_letter(raw) {
-        return Some((LocationSlot::Drive, CONF_HIT));
+    if let Some(d) = drive_letter(raw) {
+        return Some((LocationSlot::Drive, CONF_HIT, Some(format!("drive-{}", d.to_ascii_lowercase()))));
     }
     if LOCATION_CURRENT.iter().any(|w| contains_word(lower, w)) {
-        return Some((LocationSlot::Current, CONF_HIT));
+        // 「当前目录」**故意不给范围键** —— 面板是浮动的，无头状态下
+        // 无从得知「当前」指哪个目录（UI 里靠用户手选目录来表达）。
+        // 编一个出来只会把结果筛成空。
+        return Some((LocationSlot::Current, CONF_HIT, None));
     }
-    if LOCATION_COMMON.iter().any(|w| contains_word(lower, w)) {
-        return Some((LocationSlot::Common, CONF_HIT));
+    if let Some(scope) = common_scope(lower) {
+        return Some((LocationSlot::Common, CONF_HIT, Some(scope.to_string())));
     }
     None
 }
 
-/// 识别 `D盘` / `d盘` / `C:\` / `E:/` 这类写法
-fn has_drive_letter(raw: &str) -> bool {
+/// 常用目录 → 范围键。
+///
+/// ⚠️ 中文「文档」**刻意不在表里**：它更常指**类型**（文档文件），
+/// 而不是「文档」这个系统文件夹。映射进去会让「找昨天的文档」
+/// 被同时筛成 `type=document` + `location=Documents`，把结果筛空。
+/// 英文 `document` 同理，只认明确的 `download` / `desktop`。
+fn common_scope(lower: &str) -> Option<&'static str> {
+    const TABLE: &[(&str, &[&str])] = &[
+        ("desktop", &["桌面", "desktop"]),
+        ("downloads", &["下载", "download"]),
+    ];
+    TABLE.iter().find(|(_, words)| words.iter().any(|w| contains_word(lower, w))).map(|(k, _)| *k)
+}
+
+/// 识别 `D盘` / `d盘` / `C:\` / `E:/` 这类写法，返回**是哪个盘**。
+///
+/// 只回 bool 不够用：`SearchScopeFilter::location_scope` 需要 `drive-d`
+/// 这种具体键才能真的把范围收窄（storage 只认 `drive-c` / `drive-d`）。
+fn drive_letter(raw: &str) -> Option<char> {
     let chars: Vec<char> = raw.chars().collect();
     for i in 0..chars.len() {
         let c = chars[i];
@@ -218,17 +248,17 @@ fn has_drive_letter(raw: &str) -> bool {
         }
         let next = chars.get(i + 1).copied();
         match next {
-            Some('盘') => return true,
+            Some('盘') => return Some(c),
             Some(':') => {
                 // 后一个可以是 \ 或 /，也可以直接结束
                 if matches!(chars.get(i + 2), None | Some('\\') | Some('/')) {
-                    return true;
+                    return Some(c);
                 }
             }
             _ => {}
         }
     }
-    false
+    None
 }
 
 /// 把 noul 概率按阈值转成 bool（与探针同一判据）
@@ -281,9 +311,39 @@ mod tests {
         assert_eq!(intent("docker").location_slot, LocationSlot::Any);
         // `docker盘` 不是盘符（前面还有字母）
         assert_ne!(
-            solve_location("docker盘", "docker盘").map(|(s, _)| s),
+            solve_location("docker盘", "docker盘").map(|(s, _, _)| s),
             Some(LocationSlot::Drive)
         );
+    }
+
+    /// 位置槽位要连**具体范围键**一起给出 —— 只给「是盘符」不够用，
+    /// 检索侧需要 `drive-d` 这种键才能真的把范围收窄。
+    #[test]
+    fn location_scope_keys_are_concrete() {
+        let scope = |q: &str| intent(q).location_scope;
+        assert_eq!(scope("D盘那个配置").as_deref(), Some("drive-d"));
+        assert_eq!(scope("c:\\Users 里的东西").as_deref(), Some("drive-c"));
+        assert_eq!(scope("桌面上那个文档").as_deref(), Some("desktop"));
+        assert_eq!(scope("下载的压缩包").as_deref(), Some("downloads"));
+
+        // 「当前目录」故意不给范围键：无头状态下无从得知「当前」是哪个目录，
+        // 编一个出来只会把结果筛成空。
+        assert_eq!(intent("当前目录的文档").location_slot, LocationSlot::Current);
+        assert_eq!(scope("当前目录的文档"), None);
+
+        // 没提到位置
+        assert_eq!(scope("docker"), None);
+    }
+
+    /// ⚠️ 「文档」是**类型**不是位置 —— 把它映射成 `documents` 文件夹
+    /// 会让「找昨天的文档」被同时筛成 `type=document` + `location=Documents`，
+    /// 结果一条都不剩。
+    #[test]
+    fn bare_document_word_is_not_a_location() {
+        let i = intent("找一下昨天的文档");
+        assert_eq!(i.type_slot, TypeSlot::Document);
+        assert_eq!(i.location_slot, LocationSlot::Any);
+        assert_eq!(i.location_scope, None);
     }
 
     #[test]

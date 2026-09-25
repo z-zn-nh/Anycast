@@ -835,7 +835,9 @@ impl Gui {
             let to_ts = |d: NaiveDate| Local.from_local_datetime(&d.and_hms_opt(0, 0, 0).unwrap()).single().map(|t| t.timestamp()).unwrap_or(0);
             st.scope.time_preset = "range".into();
             st.scope.custom_start_time = Some(to_ts(s));
-            st.scope.custom_end_time = Some(to_ts(e));
+            // 用户选的是「日期」，语义上应当**含当天** —— 上限取当天 23:59:59。
+            // 只传零点会让最后一天整天被排除（`time_upper_bound` 不再补一天）。
+            st.scope.custom_end_time = Some(to_ts(e) + 86_399);
         }
     }
 
