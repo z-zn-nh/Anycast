@@ -894,6 +894,42 @@ impl Gui {
             apps,
             crate::core::search::fmt_size(db)
         )));
+
+        // 健康度：把「正文索引 543 条、文件索引却只有 1 条」这类不一致直接摆到用户面前，
+        // 而不是等到搜索里发现打不开文件才察觉。
+        let (rep, st) = self.core.index_health();
+        g.set_index_integrity(ss(&if rep.healthy() {
+            format!("文件 {} · 正文 {} · 孤儿正文 0 · 悬空引用 0 —— 一致性正常", rep.files, rep.content)
+        } else {
+            format!(
+                "文件 {} · 正文 {} · 孤儿正文 {} · 悬空置顶 {} · 悬空最近 {} —— 存在不一致，建议重建索引",
+                rep.files, rep.content, rep.orphan_content, rep.dangling_pins, rep.dangling_recent
+            )
+        }));
+
+        let mode_cn = match st.mode.as_str() {
+            "rebuild" => "全量重建",
+            "full" => "全量校验",
+            "reconcile" => "增量对账",
+            _ => "尚未扫描",
+        };
+        let free_pct = if rep.db_bytes > 0 {
+            rep.freelist_bytes as f64 * 100.0 / rep.db_bytes as f64
+        } else {
+            0.0
+        };
+        g.set_index_space(ss(&format!(
+            "索引库 {} · 空闲页 {} ({:.1}%) · 上轮{} {:.2} s · 移除 {} 条{}",
+            crate::core::search::fmt_size(rep.db_bytes),
+            crate::core::search::fmt_size(rep.freelist_bytes),
+            free_pct,
+            mode_cn,
+            st.last_scan_ms as f64 / 1000.0,
+            st.removed,
+            if st.dropped > 0 { format!(" · 丢弃 {} 条（异常）", st.dropped) } else { String::new() }
+        )));
+        g.set_index_maintaining(self.core.is_compacting());
+
         g.set_clip_stats(ss(&format!("剪贴板历史 {} 条 · 位于 {}", clips, crate::core::settings::db_path().display())));
         g.set_cache_info(ss(&format!("索引库与配置位于 {} · 当前 {}", crate::core::settings::data_dir().display(), crate::core::search::fmt_size(db))));
     }
@@ -1307,7 +1343,14 @@ impl Gui {
                 self.refresh_pinned();
                 self.update_status();
             }
-            BackendNotification::ToastMessage { text, icon } => self.toast(&text, &icon),
+            BackendNotification::ToastMessage { text, icon } => {
+                self.toast(&text, &icon);
+                // 索引库整理是在后台线程跑的，完成通知回到这里时按钮要恢复可点、
+                // 空闲页读数也要跟着刷新。
+                if self.ui.get_settings_visible() {
+                    self.sync_stats_to_ui();
+                }
+            }
             BackendNotification::SearchResultsReady { .. } => {}
         }
     }
@@ -1584,6 +1627,16 @@ impl Gui {
                 "rebuild-index" => {
                     g.core.rebuild_index();
                     g.toast("已触发全量索引重建（后台低优先级运行）", "database");
+                    g.sync_stats_to_ui();
+                }
+                "reconcile-index" => {
+                    g.core.reconcile_index();
+                    g.toast("已触发增量对账（只检查变化的目录）", "search");
+                    g.sync_stats_to_ui();
+                }
+                "compact-index" => {
+                    // 真正的 VACUUM 在后台线程跑，完成后由 ToastMessage 通知回来
+                    g.core.compact_index_async();
                     g.sync_stats_to_ui();
                 }
                 "clear-clipboard" => match g.core.clear_clipboard_history() {

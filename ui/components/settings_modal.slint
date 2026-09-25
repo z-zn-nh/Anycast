@@ -37,6 +37,10 @@ export global Settings {
     in-out property <string> index-stats: "";
     in-out property <string> index-roots: "";
     in-out property <bool> indexing: false;
+    // 索引健康度（来自 core.index_health()）与整理中的互斥状态
+    in-out property <string> index-integrity: "";
+    in-out property <string> index-space: "";
+    in-out property <bool> index-maintaining: false;
     // 剪贴板
     in-out property <bool> clip-enabled: true;
     in-out property <string> clip-limit: "500";
@@ -463,8 +467,12 @@ export component SettingsModal inherits Rectangle {
                         }
                         Group {
                             title: "索引库统计与维护";
-                            Row { label: Settings.indexing ? "正在建立索引…" : "本地索引库状态"; desc: Settings.index-stats; divider: false;
+                            Row { label: Settings.indexing ? "正在建立索引…" : "本地索引库状态"; desc: Settings.index-stats;
                                 ActionButton { label: "重建索引"; icon: "reset"; enabled: !Settings.indexing; clicked => { Settings.action("rebuild-index"); } } }
+                            Row { label: "一致性校验"; desc: Settings.index-integrity;
+                                ActionButton { label: "立即对账"; icon: "search"; enabled: !Settings.indexing; clicked => { Settings.action("reconcile-index"); } } }
+                            Row { label: "空间占用"; desc: Settings.index-space; divider: false;
+                                ActionButton { label: Settings.index-maintaining ? "整理中…" : "整理索引库"; icon: "database"; enabled: !Settings.index-maintaining; clicked => { Settings.action("compact-index"); } } }
                         }
                     }
 

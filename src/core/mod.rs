@@ -30,6 +30,8 @@ pub struct AppCore {
     notifier: Notifier,
     hotkeys: RwLock<Vec<HotkeyBindingModel>>,
     apps_ready: std::sync::atomic::AtomicBool,
+    /// 索引库整理进行中。用于禁用设置页按钮、防止重复触发 VACUUM。
+    compacting: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppCore {
@@ -57,6 +59,7 @@ impl AppCore {
             notifier,
             hotkeys: RwLock::new(Vec::new()),
             apps_ready: std::sync::atomic::AtomicBool::new(false),
+            compacting: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
         *core_slot.write() = Some(Arc::downgrade(&core));
 
@@ -537,6 +540,60 @@ impl AppCore {
     /// 清理正文索引中已找不到对应文件的条目，返回清理条数
     pub fn purge_orphan_content(&self) -> Result<usize> {
         self.storage.purge_orphan_content()
+    }
+
+    /// 后台整理索引库（WAL checkpoint + VACUUM），完成后用 Toast 回报结果。
+    ///
+    /// VACUUM 需要重建整库、期间独占写锁，放在 UI 线程上会把搜索热路径卡住
+    /// （实测 46 MB 的库约 330 ms，更大的库按比例更久）。
+    /// 因此这里丢到独立线程跑 —— 通知走 `upgrade_in_event_loop`，回到 UI 线程是安全的。
+    ///
+    /// 重复调用会被 `compacting` 挡掉：两个 VACUUM 并发只会互相抢锁。
+    pub fn compact_index_async(&self) {
+        use std::sync::atomic::Ordering;
+        if self.compacting.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let storage = Arc::clone(&self.storage);
+        let notifier = Arc::clone(&self.notifier);
+        let flag = Arc::clone(&self.compacting);
+        let spawned = std::thread::Builder::new()
+            .name("anycast-compact".into())
+            .spawn(move || {
+                let mb = |b: i64| format!("{:.1} MB", b as f64 / 1_048_576.0);
+                let (text, icon) = match storage.maintenance(true) {
+                    Ok(r) if r.vacuumed => (
+                        format!(
+                            "索引库已整理：{} → {}，空闲页 {} → {}",
+                            mb(r.before_bytes),
+                            mb(r.after_bytes),
+                            mb(r.before_free),
+                            mb(r.after_free)
+                        ),
+                        "database",
+                    ),
+                    Ok(r) => (
+                        format!(
+                            "索引库无需整理（当前 {}，空闲页 {}）",
+                            mb(r.after_bytes),
+                            mb(r.after_free)
+                        ),
+                        "check",
+                    ),
+                    Err(e) => (format!("索引库整理失败：{e}"), "alert"),
+                };
+                flag.store(false, Ordering::SeqCst);
+                notifier(BackendNotification::ToastMessage { text, icon: icon.to_string() });
+            });
+        if let Err(e) = spawned {
+            self.compacting.store(false, Ordering::SeqCst);
+            log::warn!("索引库整理线程启动失败：{e}");
+        }
+    }
+
+    /// 索引库是否正在整理中（供设置页禁用按钮）
+    pub fn is_compacting(&self) -> bool {
+        self.compacting.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn clear_clipboard_history(&self) -> Result<usize> {
