@@ -48,9 +48,34 @@ ERROR_HOTKEY_ALREADY_REGISTERED = 1409
 VK = {
     "ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B,
     "space": 0x20, "enter": 0x0D, "esc": 0x1B, "tab": 0x09,
-    "f13": 0x7C, "f14": 0x7D,
+    "back": 0x08, "del": 0x2E, "insert": 0x2D,
+    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
+    ",": 0xBC, ".": 0xBE, ";": 0xBA, "/": 0xBF, "-": 0xBD, "=": 0xBB,
 }
 MOD_OF = {"ctrl": MOD_CONTROL, "alt": MOD_ALT, "shift": MOD_SHIFT, "win": MOD_WIN}
+
+
+def vk_of(name):
+    """按键名 → 虚拟键码。**所有发送函数必须共用这一个**。
+
+    ⚠ 之前 `VK` 表里只有 f13/f14，`spec_of("Ctrl+Shift+F9")` 返回 vk=None，
+    自检于是「解析不了 → 跳过」并返回 None，上层把它读成「注入不动」。
+    **探针报 ❌ 时可能只是它不认识这个键，不是真的注入失败。**
+    F1~F24 按 `0x70 + n - 1` 算（与应用的 `hotkey::vk_of_key` 一致）。
+    """
+    n = name.strip().lower()
+    if not n:
+        return None
+    if n in VK:
+        return VK[n]
+    if n.startswith("f") and n[1:].isdigit():
+        k = int(n[1:])
+        if 1 <= k <= 24:
+            return 0x70 + k - 1
+    if len(n) == 1 and n.isascii() and n.isalnum():
+        return ord(n.upper())
+    return None
 
 
 # ------------------------------------------------------------------ 窗口
@@ -129,7 +154,7 @@ def claim_test(specs):
 
     # 对照组：先证明「这套判据本身有效」
     control_ok, control_err = try_claim(
-        MOD_CONTROL | MOD_ALT | MOD_SHIFT, VK["f13"], "control")
+        MOD_CONTROL | MOD_ALT | MOD_SHIFT, vk_of("F13"), "control")
     print(f"   对照 Ctrl+Alt+Shift+F13  → {'抢到' if control_ok else f'没抢到 err={control_err}'}")
     if not control_ok:
         print(f"   ⚠ 对照都没抢到（err={control_err}）→ 本环境不适合用 1409 下结论，")
@@ -159,11 +184,7 @@ def send_combo(combo):
     rest = [p for p in parts if p not in MOD_OF]
     if not rest:
         raise SystemExit(f"ERR: {combo} 没有主键")
-    main = VK.get(rest[0])
-    if main is None and len(rest[0]) == 1 and rest[0].isascii():
-        # 单字母/数字：VK 表里没有，直接取大写码。漏了这一步时
-        # send_combo("Alt+P") 会 SystemExit，把整个矩阵测试打断在半路。
-        main = ord(rest[0].upper())
+    main = vk_of(rest[0])
     if main is None:
         raise SystemExit(f"ERR: 未知主键 {rest[0]}")
 
@@ -186,7 +207,7 @@ def send_combo_sendinput(combo):
     parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
     mods = [p for p in parts if p in MOD_OF]
     rest = [p for p in parts if p not in MOD_OF]
-    main = VK.get(rest[0]) or (ord(rest[0].upper()) if len(rest[0]) == 1 else None)
+    main = vk_of(rest[0])
     if main is None:
         raise SystemExit(f"ERR: 未知主键 {rest[0]}")
 
@@ -236,7 +257,7 @@ def send_combo_chord(combo):
     parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
     mods = [p for p in parts if p in MOD_OF]
     rest = [p for p in parts if p not in MOD_OF]
-    main = VK.get(rest[0]) or (ord(rest[0].upper()) if len(rest[0]) == 1 else None)
+    main = vk_of(rest[0])
     if main is None:
         raise SystemExit(f"ERR: 未知主键 {rest[0]}")
 
@@ -294,9 +315,7 @@ def spec_of(combo):
         if p in MOD_OF:
             mods |= MOD_OF[p]
         else:
-            vk = VK.get(p)
-            if vk is None and len(p) == 1:
-                vk = ord(p.upper())
+            vk = vk_of(p)
     return mods, vk
 
 
@@ -337,7 +356,7 @@ def cmd_run():
         print("     → 沿用先前矩阵的结论继续（该组合键在空闲时已验证可注入）")
 
     specs = [(combo, mods, vk)]
-    specs.append(("Ctrl+Alt+Shift+F14", MOD_CONTROL | MOD_ALT | MOD_SHIFT, VK["f14"]))
+    specs.append(("Ctrl+Alt+Shift+F14", MOD_CONTROL | MOD_ALT | MOD_SHIFT, vk_of("F14")))
     claim_test(specs)
 
     print("── 2. 投递效果（全程不置前，两个方向都测）" + "─" * 18)
@@ -627,12 +646,87 @@ def diag(combo="Alt+Space"):
     print()
 
 
+def cmd_bindings(specs):
+    """验证「快捷直达」绑定项。
+
+    spec 形如 `<combo>|<期望已注册0/1>|<标记文件路径 或 ->`
+
+    为什么要用**标记文件**当信号：绑定项的效果是「启动某个目标」，
+    「某个窗口冒出来了」这种信号太软（窗口可能是本来就在的）。
+    让靶子写一个标记文件，「文件出现」是确定性的、可轮询的、
+    而且能区分**是哪一个绑定**被触发 —— 索引错位那类 bug 只有这样才看得出来。
+    """
+    main = main_window()
+    if not main:
+        raise SystemExit("ERR: 找不到 Anycast 主窗口，应用没在跑？")
+    print(f"主窗口 HWND = {main}  (pid {pid_of(main)})\n")
+
+    print("── 注册归属" + "─" * 44)
+    print("   对照 Ctrl+Alt+Shift+F14 应当能抢到（证明判据有效）\n")
+    ok, err = try_claim(MOD_CONTROL | MOD_ALT | MOD_SHIFT, vk_of("F14"), "control")
+    # 注意方向：对照**应当抢得到**。抢不到说明判据本身失灵，
+    # 那下面的 1409 就不能当证据 —— 但这里常被写反成「抢到 = 异常」。
+    print(f"   对照 Ctrl+Alt+Shift+F14 → "
+          + ("✅ 抢到（判据有效）" if ok else f"❌ 没抢到 err={err}（判据失灵，下面结论无效）"))
+    print()
+    reg_ok = True
+    for combo, want, _marker in specs:
+        mods, vk = spec_of(combo)
+        ok, err = try_claim(mods, vk, combo)
+        held = (not ok) and err == ERROR_HOTKEY_ALREADY_REGISTERED
+        good = (held == bool(want))
+        reg_ok &= good
+        print(f"   {combo:18} 期望{'已注册' if want else '未注册'} → "
+              f"{'已注册(1409)' if held else f'未注册(err={err})'} "
+              + ("✅" if good else "❌ 不符"))
+    print()
+
+    print("── 触发效果（标记文件）" + "─" * 34)
+    trig_ok = True
+    for combo, want, marker in specs:
+        if not marker or marker == "-":
+            print(f"\n   {combo}：无标记文件，跳过触发测试")
+            continue
+        if os.path.exists(marker):
+            os.remove(marker)
+        before = snap(main)
+        send_combo_chord(combo)
+        appeared = False
+        for _ in range(40):            # 最多等 4s：ShellExecute 是异步的
+            time.sleep(0.1)
+            if os.path.exists(marker):
+                appeared = True
+                break
+        after = snap(main)
+        if want:
+            good = appeared
+        else:
+            good = not appeared
+        trig_ok &= good
+        print(f"\n   {combo} → {os.path.basename(marker)}")
+        print(f"     期望{'出现' if want else '不出现'} → "
+              f"{'出现了' if appeared else '没出现'} " + ("✅" if good else "❌ 不符"))
+        print(f"     窗口 {fmt(before)} → {fmt(after)}")
+        if appeared:
+            try:
+                with open(marker, encoding="utf-8", errors="replace") as f:
+                    print(f"     内容: {f.read().strip()!r}")
+            except OSError as e:
+                print(f"     读不到内容: {e}")
+    print()
+    print("── 汇总" + "─" * 48)
+    print(f"   注册归属: {'✅ 全部符合预期' if reg_ok else '❌ 有不符合'}")
+    print(f"   触发效果: {'✅ 全部符合预期' if trig_ok else '❌ 有不符合'}")
+    print()
+    return reg_ok and trig_ok
+
+
 def cmd_claim():
     combo_cfg, _ = cfg_hotkey()
     combo = combo_cfg if isinstance(combo_cfg, str) else "Alt+Space"
     mods, vk = spec_of(combo)
     claim_test([(combo, mods, vk),
-                ("Ctrl+Alt+Shift+F14", MOD_CONTROL | MOD_ALT | MOD_SHIFT, VK["f14"])])
+                ("Ctrl+Alt+Shift+F14", MOD_CONTROL | MOD_ALT | MOD_SHIFT, vk_of("F14"))])
 
 
 def cmd_send(combo):
@@ -686,6 +780,14 @@ if __name__ == "__main__":
         cmd_fg()
     elif argv[0] == "claim":
         cmd_claim()
+    elif argv[0] == "bindings":
+        parsed = []
+        for s in argv[1:]:
+            parts = s.split("|")
+            if len(parts) != 3:
+                raise SystemExit(f"ERR: spec 要形如 <combo>|<0/1>|<marker>，收到 {s!r}")
+            parsed.append((parts[0].strip(), int(parts[1]), parts[2].strip()))
+        cmd_bindings(parsed)
     elif argv[0] == "send":
         cmd_send(argv[1] if len(argv) > 1 else "Alt+Space")
     else:
