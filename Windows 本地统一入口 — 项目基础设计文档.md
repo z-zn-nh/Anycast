@@ -815,7 +815,9 @@ SQLite
 
 后续可以利用：
 
-> Windows NTFS USN Journal
+> ~~Windows NTFS USN Journal~~ → **已否决**（2026-09-24）：读 USN 需**管理员权限**，
+> 与「绿色免安装、非特权运行」的定位冲突。改用**目录 mtime 增量对账**替代，
+> 详见开发文档 §4.3.2 ①。
 
 实现增量更新。
 
@@ -988,7 +990,7 @@ AI 是：
 │ File Index                            │
 │ SQLite / FTS5                         │
 │ Windows API (ShellExecute/DWM)        │
-│ USN Journal                           │
+│ 目录 mtime 增量对账                   │
 │ Clipboard API                         │
 │ Global Hotkey Engine (Win32 API)      │
 └───────────────────┬───────────────────┘
@@ -1187,7 +1189,7 @@ Appearance (外观设置)
 └── Theme Mode (深色/浅色模式切换)
 
 Search (搜索与索引)
-├── Indexed Locations (NTFS USN 索引目录)
+├── Indexed Locations (索引目录，NTFS 用目录 mtime 对账)
 ├── Excluded Locations (排除路径)
 └── Search Mode (极速 / AI智能)
 
@@ -1246,6 +1248,8 @@ UI (终端与打开方式)
 > 2. **Phase 3 补入「中文分词」与「排序模型」**。原 Phase 3 只列了 FTS5 与 USN Journal，
 >    但真正决定「检索效果好不好」的是**中文分词质量**与**排序权重设计**，
 >    而非索引结构本身。判断模型（Phase 4）**不提升准确率**，故不得替代这两项。
+>    **2026-09-24 再修正**：这三项（FTS5 / 中文分词 / 排序模型）经代码核对**均已实现**，
+>    见开发文档 §4.1。索引层真正欠的是**维护**那一半（增量对账、空间回收），见 §4.3。
 >
 > ### Phase 0（前置阻塞）
 >
@@ -1282,12 +1286,15 @@ Search Ranking
 
 ### Phase 3
 
+> **2026-09-24 修正**：下列前三项经代码核对**已经实现**（见开发文档 §4.1），
+> 第四项 USN Journal **已否决**（需管理员权限）。实际排期见开发文档 §6。
+
 ```
-File Content Search
-FTS5
-中文分词（trigram / jieba）
-排序模型（前缀 > 词首 > 中间 + 频率 / 时间 / 类型权重）
-USN Journal
+File Content Search                              ← 已实现（content_fts）
+FTS5                                             ← 已实现
+中文分词（trigram tokenizer）                      ← 已实现（天然支持 CJK）
+排序模型（前缀 > 词首 > 中间 + 频率/时间/类型权重）  ← 已实现（name_score + boost_by_usage）
+USN Journal                                      ← 已否决，改用目录 mtime 对账
 ```
 
 ### Phase 4
@@ -1500,14 +1507,18 @@ AI
 
 这样以后：
 
+> **2026-09-24 修正**：原先这条路线以 **Everything** 起头。但已裁决
+> **不引入 Everything 的任何二进制**，只借鉴其架构思想（增量对账、元数据常驻内存、
+> 索引可重建）。故起点改为自建索引。详见开发文档 §4.3。
+
 ```
-Everything
-↓
-自建索引
+自建索引（walkdir + notify）
 ↓
 SQLite
 ↓
-FTS5
+FTS5 + trigram（已实现）
+↓
+目录 mtime 增量对账（已定方案）
 ↓
 Vector Search
 ↓
