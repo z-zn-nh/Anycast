@@ -2,6 +2,7 @@
 
 pub mod apps;
 pub mod cli;
+pub mod decision;
 pub mod hotkey;
 pub mod indexer;
 pub mod launcher;
@@ -27,6 +28,8 @@ pub struct AppCore {
     pub engine: Arc<SearchEngine>,
     pub indexer: Arc<indexer::Indexer>,
     pub bus: Arc<SystemBus>,
+    /// 判断模型三级闸门（规则 / 本地 / 云端）+ 查询埋点
+    pub decision: decision::hub::DecisionHub,
     notifier: Notifier,
     hotkeys: RwLock<Vec<HotkeyBindingModel>>,
     apps_ready: std::sync::atomic::AtomicBool,
@@ -52,6 +55,7 @@ impl AppCore {
 
         let core = Arc::new(AppCore {
             settings: RwLock::new(settings),
+            decision: decision::hub::DecisionHub::new(Arc::clone(&storage)),
             storage,
             engine,
             indexer,
@@ -608,6 +612,42 @@ impl AppCore {
             self.engine.app_count(),
             self.storage.clip_count(),
         )
+    }
+
+    // ------------------------------------------------------------------
+    // 判断模型（三级闸门）
+    // ------------------------------------------------------------------
+
+    /// **闸门 1**：同步、< 1 ms，可安全在 UI 线程调用。
+    ///
+    /// 返回的 `Analysis.intent` 是规则版结论，**永远可用** ——
+    /// 即使后面还要升级到云端，也可以先用它出首屏结果。
+    pub fn analyze_query(&self, query: &str) -> decision::hub::Analysis {
+        let s = self.settings.read().clone();
+        self.decision.analyze(query, &s)
+    }
+
+    /// **闸门 2 / 3**：阻塞调用（云端硬超时 2000 ms），**必须在后台线程调用**。
+    ///
+    /// 返回 `None` 表示无需升级或没有可用后端 —— 调用方照常使用
+    /// [`analyze_query`](Self::analyze_query) 的规则结论，**这不是错误**。
+    /// 任何失败都静默降级，不弹提示（§5.7 硬性规则 2）。
+    pub fn upgrade_intent(&self, query: &str) -> Option<decision::Intent> {
+        let s = self.settings.read().clone();
+        match self.decision.upgrade(query, &s) {
+            Ok(v) => v,
+            Err(e) => {
+                log::debug!("判断模型升级失败，静默降级到规则结果：{e}");
+                None
+            }
+        }
+    }
+
+    /// 查询埋点报告（语言分布 / 自然语言占比 / 闸门分布）
+    ///
+    /// 这是决定「后端默认值」与「是否值得上本地模型」的唯一依据，不要靠猜。
+    pub fn decision_telemetry(&self) -> String {
+        self.decision.telemetry_report()
     }
 
     pub fn shutdown(&self) {

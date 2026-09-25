@@ -34,6 +34,9 @@ pub const USAGE: &str = "\
   --index-watch   [--db PATH] --root DIR [--seconds N]
                                                      挂实时监控 N 秒（默认 20），
                                                      用于验证 notify 事件形态
+  --decide QUERY  [--cloud]                          解析查询的意图槽位：闸门 1 判定 +
+                                                     规则版槽位 + 埋点报告。
+                                                     --cloud 额外试一次云端 Jev（需 Key）
   --db PATH       指定数据库（默认 %APPDATA%\\Anycast\\data\\anycast.db）
   --root DIR      索引根目录（可重复）
   --seconds N     监控时长
@@ -58,10 +61,17 @@ struct Args {
     seconds: u64,
     db: Option<PathBuf>,
     roots: Vec<String>,
+    /// `--decide QUERY`
+    decide: Option<String>,
+    /// `--cloud`：--decide 时额外试一次云端
+    cloud: bool,
 }
 
 fn parse(argv: &[String]) -> Option<Args> {
-    if !argv.iter().any(|a| a.starts_with("--index-")) {
+    if !argv
+        .iter()
+        .any(|a| a.starts_with("--index-") || a == "--decide")
+    {
         return None;
     }
     let mut a = Args {
@@ -75,6 +85,8 @@ fn parse(argv: &[String]) -> Option<Args> {
         seconds: 20,
         db: None,
         roots: Vec::new(),
+        decide: None,
+        cloud: false,
     };
     let mut it = argv.iter();
     while let Some(arg) = it.next() {
@@ -88,6 +100,8 @@ fn parse(argv: &[String]) -> Option<Args> {
             "--no-content" => a.no_content = true,
             "--seconds" => a.seconds = it.next().and_then(|s| s.parse().ok()).unwrap_or(20),
             "--db" => a.db = it.next().map(PathBuf::from),
+            "--decide" => a.decide = it.next().cloned(),
+            "--cloud" => a.cloud = true,
             "--root" => {
                 if let Some(r) = it.next() {
                     a.roots.push(r.clone());
@@ -131,7 +145,7 @@ fn print_integrity(s: &Storage, title: &str) {
 /// 命中命令行模式时返回退出码；否则返回 None，交回 GUI 启动流程。
 pub fn maybe_run(argv: &[String]) -> Option<i32> {
     let a = parse(argv)?;
-    if !a.status && !a.compact && !a.scan && !a.watch {
+    if !a.status && !a.compact && !a.scan && !a.watch && a.decide.is_none() {
         println!("{USAGE}");
         return Some(2);
     }
@@ -148,6 +162,10 @@ fn run(a: Args) -> anyhow::Result<i32> {
     let db = a.db.clone().unwrap_or_else(crate::core::settings::db_path);
     println!("数据库: {}", db.display());
     let storage = Arc::new(Storage::open(&db)?);
+
+    if let Some(q) = a.decide.clone() {
+        run_decide(&storage, &q, a.cloud);
+    }
 
     if a.status {
         print_integrity(&storage, "索引一致性");
@@ -246,4 +264,114 @@ fn run(a: Args) -> anyhow::Result<i32> {
     }
 
     Ok(0)
+}
+
+// ---------------------------------------------------------------------------
+// 判断模型验证（--decide）
+// ---------------------------------------------------------------------------
+
+fn yn(v: bool) -> &'static str {
+    if v {
+        "是"
+    } else {
+        "否"
+    }
+}
+
+fn fmt_ts(ts: i64) -> String {
+    use chrono::{Local, TimeZone};
+    Local
+        .timestamp_opt(ts, 0)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| ts.to_string())
+}
+
+fn indent(text: &str) -> String {
+    text.lines()
+        .map(|l| format!("    {l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn print_intent(it: &crate::core::decision::Intent) {
+    println!("    类型          {}（{}）", it.type_slot.label_cn(), it.type_slot.as_str());
+    println!("    时间          {}（{}）", it.time_slot.label_cn(), it.time_slot.as_str());
+    println!("    位置          {}（{}）", it.location_slot.label_cn(), it.location_slot.as_str());
+    println!("    是搜索        {}", yn(it.is_search));
+    println!("    是自然语言    {}", yn(it.is_natural));
+    println!("    置信度        {:.2}", it.confidence);
+}
+
+/// 打印一次查询的完整解析链路。
+///
+/// 存在理由：GUI 里只能看到「结果变了」，看不到**为什么**变 ——
+/// 闸门判定、槽位取值、置信度、埋点，这些在命令行里才看得清。
+fn run_decide(storage: &Arc<Storage>, query: &str, cloud: bool) {
+    use crate::core::decision::hub::DecisionHub;
+    use crate::core::decision::jev;
+
+    let mut settings = crate::core::settings::load_settings();
+    // 诊断工具：不受「功能未启用」影响 —— 否则开关一关就什么都看不到。
+    // 只影响本次进程，不写回配置。
+    if !settings.ai_enabled || !settings.ai_intent_parsing {
+        println!("\n注：配置里 AI 功能未启用，本次按诊断模式强制打开（不会改动你的配置）");
+        settings.ai_enabled = true;
+        settings.ai_intent_parsing = true;
+    }
+    let hub = DecisionHub::new(Arc::clone(storage));
+
+    let t0 = std::time::Instant::now();
+    let a = hub.analyze(query, &settings);
+    let elapsed = t0.elapsed();
+
+    println!("\n=== 判断模型 · 闸门 1 ===");
+    println!("  查询            {query}");
+    println!("  耗时            {elapsed:?}");
+    println!("  语言            {}", a.shape.lang.as_str());
+    println!("  估算词数        {}", a.shape.words);
+    println!("  像自然语言      {}", yn(a.shape.is_natural));
+    println!("  像文件名        {}", yn(a.shape.filename_like));
+    println!("  含时间词        {}", yn(a.shape.has_time_word));
+    println!("  含类型词        {}", yn(a.shape.has_type_word));
+    println!("  值得调模型      {}", yn(a.worth_upgrade));
+    println!("  预计闸门        {}", a.gate.as_str());
+    println!("  规则解析出槽位  {}", yn(a.slot_hit));
+
+    println!("\n  规则版槽位解析");
+    print_intent(&a.intent);
+    let (from, to) = a.intent.time_slot.range();
+    if from.is_some() || to.is_some() {
+        println!(
+            "    时间范围      {} → {}",
+            from.map(fmt_ts).unwrap_or_else(|| "不限".into()),
+            to.map(fmt_ts).unwrap_or_else(|| "不限".into())
+        );
+    }
+
+    if cloud {
+        println!("\n  云端 Jev（闸门 3）");
+        if !hub.cloud_ready(&settings) {
+            println!("    跳过：未启用云端，或未配置 API Key");
+            println!("    提示：设置环境变量 {} 或 {}，",
+                jev::ENV_OFFICIAL, jev::ENV_HOSTED);
+            println!("          或把 key 写进 config.json 的 ai_jev_api_key");
+        } else {
+            let t1 = std::time::Instant::now();
+            match hub.upgrade(query, &settings) {
+                Ok(Some(it)) => {
+                    println!("    耗时          {:?}", t1.elapsed());
+                    print_intent(&it);
+                }
+                Ok(None) => println!(
+                    "    跳过：闸门 1 判定无需升级（纯关键词，或规则已解析出槽位）"
+                ),
+                Err(e) => println!("    失败（已静默降级到规则结果）：{e}"),
+            }
+        }
+    }
+
+    println!("\n  埋点累计");
+    println!("{}", indent(&hub.telemetry_report()));
+    hub.flush_telemetry();
 }

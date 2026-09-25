@@ -43,6 +43,9 @@ features = [
   "Win32_System_SystemInformation",
   "Win32_UI_Controls",
   "Win32_UI_HiDpi",
+  # Jev 云端后端用系统自带 WinHTTP —— 零新增 crate，且默认跟随系统代理
+  # （Clash Verge 开「系统代理」时自动生效，不必再配一遍）
+  "Win32_Networking_WinHttp",
 ]
 
 [build-dependencies]

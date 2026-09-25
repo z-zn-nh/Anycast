@@ -35,6 +35,18 @@ fn default_content_max_kb() -> u32 {
     512
 }
 
+fn default_ai_backend_mode() -> String {
+    "auto".into()
+}
+
+fn default_jev_endpoint() -> String {
+    "https://api.typesafe.ai/v1/systemone".into()
+}
+
+fn default_jev_model() -> String {
+    "jev-latest".into()
+}
+
 fn default_excluded() -> Vec<String> {
     [
         "node_modules",
@@ -148,6 +160,26 @@ pub struct AppSettings {
     pub ai_lazy_load: bool,
     #[serde(default = "default_true")]
     pub ai_intent_parsing: bool,
+    // AI —— 判断模型后端（开发文档 Phase 2）
+    /// `"auto"` | `"rule"` | `"laya"` | `"jev"`
+    ///
+    /// `auto` = 逐级升级：规则 → 本地模型 →（若开云端回退）云端，任一级成功即止。
+    #[serde(default = "default_ai_backend_mode")]
+    pub ai_backend_mode: String,
+    /// 本地置信度低于阈值时是否升级到云端。**默认关**（§5.6）。
+    #[serde(default)]
+    pub ai_cloud_fallback: bool,
+    /// Jev 端点完整 URL。默认官方端点；托管端点见 `decision::jev::HOSTED_ENDPOINT`。
+    #[serde(default = "default_jev_endpoint")]
+    pub ai_jev_endpoint: String,
+    /// API Key。⚠️ 明文存本地配置；环境变量 `TYPESAFE_API_KEY` / `JEV_API_KEY` 优先级更高。
+    #[serde(default)]
+    pub ai_jev_api_key: String,
+    #[serde(default = "default_jev_model")]
+    pub ai_jev_model: String,
+    /// 显式代理（如 `http://127.0.0.1:7897`）。留空 = 跟随系统代理。
+    #[serde(default)]
+    pub ai_jev_proxy: String,
 }
 
 impl Default for AppSettings {
