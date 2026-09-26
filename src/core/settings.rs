@@ -7,8 +7,23 @@ use std::path::{Path, PathBuf};
 fn default_true() -> bool {
     true
 }
+/// 默认唤醒热键。
+///
+/// ⚠️ **刻意避开 `Alt+Space`**（2026-09-25 改）。理由不是「这台机器被占了」，
+/// 而是这个键在**产品层面**就注定冲突：
+///
+/// 1. Windows 把 `Alt+Space` 留给窗口系统菜单；
+/// 2. 几乎每一个启动器类应用（uTools / PowerToys Run / Wox / Listary / PI-Desktop…）
+///    都把它当默认呼出键。抢不到 `RegisterHotKey` 的那些会改用
+///    `SetWindowsHookEx(WH_KEYBOARD_LL)` 硬吞 —— 而**钩子型冲突不占注册表**，
+///    `RegisterHotKey` 照样返回成功，只有真按一次才知道收不到。
+///    详见 `doc/实施进展与已知问题.md` §12 / §12.1 / §12.2。
+///
+/// 选 `Ctrl+Alt+Q`：三个键，不与系统键、输入法切换键（`Ctrl+Space` / `Win+Space`）、
+/// IDE 常用键（`Ctrl+Shift+Space`）重叠；本机实测 `注册=True err=0` 且按键真能到。
+/// 用户随时可在设置页点键帽重录，或点「检测」验证新键是否真能送达。
 fn default_wake_hotkey() -> String {
-    "Alt+Space".into()
+    "Ctrl+Alt+Q".into()
 }
 fn default_mode() -> String {
     "fast".into()

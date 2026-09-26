@@ -8,7 +8,9 @@ import { ScrollView } from "std-widgets.slint";
 export global Settings {
     in-out property <string> tab: "general";
     // 常规
-    in-out property <string> wake-hotkey: "Alt+Space";
+    // 初值必须与 `src/core/settings.rs::default_wake_hotkey()` 一致，
+    // 否则后端同步过来之前会先闪一下旧键名。
+    in-out property <string> wake-hotkey: "Ctrl+Alt+Q";
     in-out property <bool> launch-on-startup: false;
     in-out property <bool> hide-on-blur: true;
     in-out property <string> default-mode: "fast";
