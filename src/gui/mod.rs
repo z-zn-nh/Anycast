@@ -621,12 +621,20 @@ impl Gui {
     /// 只有 `Delivered` 允许用「✓」；其余一律「⚠」—— 把 `Inconclusive` 也报成
     /// 成功就是在骗人，而这条链路的整个毛病正是「静默地假装正常」。
     fn report_wake_delivery(self: &Rc<Self>, d: WakeDelivery, recorded: bool) {
-        // 注入按键把「占用键的那个程序」叫出来了，它的窗口此刻就在最前面。
-        // 不把本窗口拉回最前，结论就是「画在窗口里、但被对方挡着」—— 等于没说。
+        // 注入按键把「占用键的那个程序」叫出来了，它的窗口此刻在**最前面** ——
+        // 启动器类程序基本都是 topmost（不置顶就盖不住全屏程序），而本窗口虽然也是
+        // topmost，但对方是**后**出现的，同一个 band 里排在它上面。
+        //
+        // 所以必须把本窗口拉回最前，否则结论是「画在窗口里、但被对方挡着」= 等于没说。
+        // 实测依据（`D:/tmp/activate_vs_topmost.py`）：放一个 topmost 窗口压在本窗口上，
+        // 再激活本窗口 → 本窗口**升到它上面**，这一步确实有效。
+        // （普通启动的程序不必担心：显示态 `GWL_EXSTYLE = 0x198` 含 `WS_EX_TOPMOST`，
+        // 非 topmost 的窗口**盖不住**本窗口。）
+        //
         // 这一步同时让 `poll_tick` 不再判成失焦（前台变回自己了）。
         //
         // ⚠️ 必须**先确认窗口可见**再前置：`force_foreground` 内部是裸的
-        // `ShowWindow(SW_SHOW)`，窗口真被藏起来时它只把原生窗口亮出来，
+        // `ShowWindow(SW_SHOW)`，窗口真被藏起来时它只把原生窗口亮出来、
         // Slint 侧的 `is_visible()` 仍是 false —— 用户会看到一个**空窗口**
         // 且没有结论，比什么都不做更糟。
         if self.ui.window().is_visible() {
@@ -2136,11 +2144,21 @@ impl Gui {
             g.sync_hotkeys_to_ui();
         });
         sbind!(on_hotkey_test, |g, id| {
+            // 「测试」会**真的启动/前置目标程序**（`AppCore::test_hotkey` →
+            // `launcher::activate_or_launch`），所以焦点会跑到目标程序那边去。
+            //
+            // ⚠️ 这里**故意不**像 `browse-folder` 那样把本窗口抢回最前。实测依据：
+            // 主窗口是 **topmost**（显示态 `GWL_EXSTYLE = 0x198`，含 `WS_EX_TOPMOST`），
+            // 而 `activate_or_launch` 启动出来的普通程序**不是** topmost ——
+            // 所以目标窗口**盖不住**本窗口，Toast 正常可见，不需要抢前台。
+            // 抢前台反而会把窗口留在最前，挡住用户真正要看的目标程序。
+            // → 别为了「和 browse-folder 统一」给它加 `force_foreground`。
             g.state.borrow_mut().suppress_blur = true;
             match g.core.test_hotkey(id.as_str()) {
                 Ok(msg) => g.toast(&msg, "play"),
                 Err(e) => g.toast(&format!("测试失败: {e}"), "x"),
             }
+            // 1.5s 后放开：此时让失焦隐藏把窗口收掉，把屏幕让给刚启动的目标程序。
             let weak = Rc::downgrade(&g);
             slint::Timer::single_shot(Duration::from_millis(1500), move || {
                 if let Some(g) = weak.upgrade() { g.state.borrow_mut().suppress_blur = false; }
