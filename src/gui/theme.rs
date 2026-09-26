@@ -8,10 +8,10 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetWindowLongW, IsWindowVisible, SetWindowLongW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SW_HIDE, SW_SHOWNOACTIVATE, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_SYSMENU,
-    WS_THICKFRAME,
+    GetCursorPos, GetWindowLongW, GetWindowRect, IsWindowVisible, SetWindowLongW, SetWindowPos,
+    ShowWindow, GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    WS_SYSMENU, WS_THICKFRAME,
 };
 
 
@@ -149,6 +149,68 @@ pub fn enforce_taskbar_exclusion(hwnd: HWND) -> bool {
         );
         true
     }
+}
+
+/// 逼一次「窗口表面失效」——用来擦掉 DWM 在**激活态变化**时画上的浅色原生标题栏。
+///
+/// 现象（2026-09-25 实测）：窗口**可见**时，只要激活态一变，左上角就会压上一条浅色
+/// 原生标题栏（标准字号写着窗口标题「Anycast」，高约 43 物理像素），**一直不消失**，
+/// 直到窗口被 hide → show 一次。两个方向都会：**失去**激活画**整条**（顶带亮占比
+/// 99.4%），**抢回**激活画**窄的一条**（约 60px，11.7%）。
+///
+/// 平时看不到（`hide_on_blur` 默认开，一失焦就藏），只有「窗口要留在屏幕上但焦点
+/// 归别人」这条路径才暴露 —— 也就是 `suppress_blur` 期间（「快捷直达 → 测试」、
+/// 唤醒键自检）。
+///
+/// ⚠️ 触发条件是**激活态变化**本身，与「测试」路径无关 —— 别把它和业务路径绑一起。
+/// 把 `hide_on_blur` 临时设 `false` 就能反复制造这个状态（测完必须复位）。
+///
+/// 试过且**无效**的手段（别再重复走，全是实测）：
+///   * `slint::Window::request_redraw()` —— 应用内重绘，无效；
+///   * `SetWindowPos(SWP_FRAMECHANGED)` / `SetWindowPos(SWP_NOCOPYBITS)` —— 无效；
+///   * `InvalidateRect` + `UpdateWindow`、`RedrawWindow(RDW_FRAME|RDW_ALLCHILDREN)` —— 无效；
+///   * `DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED` —— 无效（该属性在 Win8+ 被忽略）；
+///   * `DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_NONE` —— 无效；
+///   * 把帧扩展 `MARGINS` 收成 `(0,0,0,0)` —— 无效（**先改再触发**，不是事后改）；
+///   * 是不是别的窗口压在它上面 —— 不是（z 序里本窗口始终最上）；
+///   * 抓图假象 —— 不是（`PrintWindow` 画出同一条标题栏）；
+///   * 窗口无响应被系统画「幽灵标题栏」—— 不是（`IsHungAppWindow` = false）。
+///
+/// **唯一有效的是真的改一次窗口尺寸**：DWM 会因此重算整个窗口（含帧）。
+/// 实测 `+1px` 之后**立刻**还原即可（间隔 0 / 20 / 80 / 350 ms 都有效），
+/// 顶带亮占比 11.2% → 0.3%。
+///
+/// ⚠️ 两次 `SetWindowPos` 必须**背靠背**发、中间不 `sleep`：这样窗口尺寸在同一次
+/// 事件处理里就回到原值，`poll_tick` 的尺寸跟踪看不到中间态，
+/// 不会把 `W x (H+1)` 当成用户缩放而写进配置（实测配置零差异）。
+///
+/// ⚠️ **必须从另一个线程发**（因此本函数会 `spawn` 一个短命线程）。
+/// 在**本线程**（也就是 `poll_tick` 里）发同样两次调用，日志显示尺寸确实
+/// `840 → 841 → 840`、两次都 `Ok`，但**标题栏不消失**；从外部进程发则有效。
+/// 差别在 winit 的 `send_event`：事件处理器**已被借用**时（`poll_tick` 正是
+/// 在 Slint 回调里跑）它会把 `WM_SIZE` 对应的 `Resized` **缓冲**起来，
+/// 于是 Slint 那一次 resize 没有真正走完「重算表面 + 重绘」。
+/// 换个线程发，消息由窗口消息队列在空闲时派发，处理器没被借用，路径就正常了。
+pub fn nudge_surface(hwnd: HWND) {
+    // `HWND` 不是 `Send`，按裸地址过线程，线程内立刻还原。
+    let raw = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        let hwnd = HWND(raw as *mut _);
+        unsafe {
+            let mut r = RECT::default();
+            if GetWindowRect(hwnd, &mut r).is_err() {
+                return;
+            }
+            let (w, h) = (r.right - r.left, r.bottom - r.top);
+            if w <= 0 || h <= 0 {
+                return;
+            }
+            let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE;
+            let _ = SetWindowPos(hwnd, None, 0, 0, w, h + 1, flags);
+            let _ = SetWindowPos(hwnd, None, 0, 0, w, h, flags);
+            log::debug!("nudge_surface(异线程)：{w}x{h} → +1 → 还原");
+        }
+    });
 }
 
 pub fn hide_from_taskbar(hwnd: HWND) -> bool {

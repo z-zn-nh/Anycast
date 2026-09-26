@@ -64,6 +64,44 @@ struct UiState {
     effects_applied: bool,
     taskbar_fixed: bool,
     last_elapsed_ms: u32,
+    /// 上一次 `poll_tick` 看到的「本窗口是不是前台」。用来检测**激活态变化**。
+    ///
+    /// 为什么要它：窗口**可见**时，只要激活态一变，DWM 就会把窗口的**非客户区**
+    /// （浅色原生标题栏，带窗口标题）重画在客户区之上，而应用（Slint 走 GPU
+    /// swap chain）不会因为这件事重绘 —— 于是那条标题栏**留在画面上**，
+    /// 直到下一次 `hide()` → `show()` 才自愈（2026-09-25 实测）。
+    /// 两个方向都会：失去激活画**整条**（顶带亮占比 99.4%），
+    /// 抢回激活画**窄的一条**（约 60px，11.7%），后者同样不会自己消失。
+    ///
+    /// 平时看不到：`hide_on_blur` 默认开，窗口一失焦就被藏掉。
+    /// 只有「窗口可见 + 非前台」这个状态才暴露 —— 而它只能由 `suppress_blur`
+    /// 造出来（「快捷直达 → 测试」、唤醒键自检）。用户看到的就是深色面板
+    /// 左上角压着一条浅色标题栏。
+    ///
+    /// 修法：**激活态只要一变**就调 `theme::nudge_surface()` —— 真的改一次
+    /// 窗口尺寸（`+1px` 后立刻还原），逼 DWM 重算整个窗口（含帧）。
+    /// 实测依据（同一天）：顶带亮占比 **11.7% → 0.3%**（抢回前台那条窄的）、
+    /// **99.4% → 0.3%**（失去前台那条整宽的），多轮复现。
+    ///
+    /// ⚠️ **两个方向都要**：失去激活画**整条**，抢回激活画**窄的一条**（约 60px），
+    /// 后者同样不会自己消失。
+    ///
+    /// ⚠️ **别改成 `request_redraw()`** —— 那是第一版修法，实测**无效**：
+    /// 客户端重绘盖不住 DWM 画的非客户区。其余无效手段与已排除的成因
+    /// 见 `theme::nudge_surface` 的注释（列了 8 条，别再重复走）。
+    ///
+    /// ⚠️ 已排除的成因（别再往这些方向查）：
+    ///   * `DwmExtendFrameIntoClientArea` 的帧扩展：**先**把 `MARGINS` 改成
+    ///     `(0,0,0,0)` **再**让状态发生，标题栏照样出现（12.1%）→ 不是它；
+    ///   * `WS_CAPTION` 回归：残留态 `GWL_STYLE` 无 `WS_CAPTION`、
+    ///     `GetClientRect == GetWindowRect`（非客户区 0×0）；
+    ///   * 缺一次 `SWP_FRAMECHANGED`：外部补上**无变化**；
+    ///   * 抓图假象：`PrintWindow(PW_RENDERFULLCONTENT)` 画出同一条标题栏；
+    ///   * 有别的窗口压在它上面：z 序里本窗口始终在最上，
+    ///     `WindowFromPoint` 也判给本窗口；
+    ///   * 窗口无响应、被系统画「幽灵标题栏」：`IsHungAppWindow` = false、
+    ///     `SendMessageTimeout(WM_NULL)` 及时应答。
+    last_fg: Option<bool>,
 }
 
 pub struct Gui {
@@ -307,6 +345,7 @@ pub fn run(silent: bool) -> anyhow::Result<()> {
             effects_applied: false,
             taskbar_fixed: false,
             last_elapsed_ms: 0,
+            last_fg: None,
         }),
         query_gen: Arc::new(AtomicU64::new(0)),
         toast_timer: slint::Timer::default(),
@@ -380,6 +419,9 @@ impl Gui {
             let mut st = self.state.borrow_mut();
             st.shown_at = Some(Instant::now());
             st.pinned_selected = None;
+            // 刚显示完是**新画的一帧**，没有要擦的残留；把「上一次的激活态」
+            // 清掉，让下一次 `poll_tick` 只做记录、不误报一次「变化」。
+            st.last_fg = None;
         }
         self.finish_native_show(0);
         self.ui.invoke_focus_search();
@@ -517,6 +559,31 @@ impl Gui {
                     self.hide_window();
                     return;
                 }
+            }
+        }
+        // 激活态变化 → 擦掉 DWM 画上的浅色原生标题栏。
+        //
+        // 不这么做的话，窗口在**激活态一变**就会被 DWM 画上一条浅色原生标题栏，
+        // 而且**不会自己消失**（详见 `last_fg` 的注释）。
+        //
+        // ⚠️ 两个方向都要：实测**失去**激活时会画上**整条**标题栏（顶带亮占比
+        // 99.4%），**抢回**激活时也会留下一条**窄的**（约 60px，亮占比 11.7%），
+        // 后者同样 5 秒不消失 —— 所以不能只在 `true → false` 时擦。
+        //
+        // 放在失焦隐藏**之后**：真被藏掉时不用管；只有窗口还要留在屏幕上
+        // （`suppress_blur` 期间）才需要这一下。
+        if let Some(hwnd) = self.hwnd() {
+            let is_fg = unsafe { GetForegroundWindow() } == hwnd;
+            // 借用单独成块：后面要调窗口 API，别在 `RefCell` 借用期间调
+            // （回调可能重入，会 panic）。
+            let was = { self.state.borrow_mut().last_fg.replace(is_fg) };
+            // `was` 为 `None` 说明刚显示过（`show_window` 会清空），新画的一帧
+            // 没有残留要擦，不误报。
+            if was.is_some_and(|prev| prev != is_fg) {
+                // ⚠️ 这里**不能**用 `request_redraw()`：实测无效（客户端重绘盖不住
+                // DWM 画的非客户区）。有效手段只有「真的改一次窗口尺寸」，
+                // 且**必须换个线程发** —— 具体与已排除项见 `theme::nudge_surface`。
+                theme::nudge_surface(hwnd);
             }
         }
         // 尺寸持久化（用户拖拽边缘缩放后）
