@@ -162,9 +162,16 @@ def claim_test(specs):
     print()
 
     rows = []
-    for name, mods, vk in specs:
+    for spec in specs:
+        # ⚠️ 支持 4 元组：第 4 位 is_control=True 表示这一项是**对照**，
+        # 期望结果是「能抢到」。以前对照项沿用被测项的判词，
+        # 会把「抢到」打成「❌ 没占住（任何人都能抢）」—— 自己吓自己。
+        name, mods, vk = spec[0], spec[1], spec[2]
+        is_control = len(spec) > 3 and spec[3]
         ok, err = try_claim(mods, vk, name)
-        if ok:
+        if is_control:
+            verdict = "✅ 对照：能抢到（判据有效）" if ok else f"⚠ 对照抢不到 err={err}（判据可疑）"
+        elif ok:
             verdict = "❌ 没占住（任何人都能抢）"
         elif err == ERROR_HOTKEY_ALREADY_REGISTERED:
             verdict = "✅ 已被占用（应用注册成功）"
@@ -356,7 +363,7 @@ def cmd_run():
         print("     → 沿用先前矩阵的结论继续（该组合键在空闲时已验证可注入）")
 
     specs = [(combo, mods, vk)]
-    specs.append(("Ctrl+Alt+Shift+F14", MOD_CONTROL | MOD_ALT | MOD_SHIFT, vk_of("F14")))
+    specs.append(("Ctrl+Alt+Shift+F14", MOD_CONTROL | MOD_ALT | MOD_SHIFT, vk_of("F14"), True))
     claim_test(specs)
 
     print("── 2. 投递效果（全程不置前，两个方向都测）" + "─" * 18)

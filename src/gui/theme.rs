@@ -126,7 +126,17 @@ pub fn ensure_dwm_admissible(hwnd: HWND) -> bool {
 /// （前置聚焦由 `launcher::force_foreground` 单独负责）。
 ///
 /// 副作用（预期内）：窗口不再出现在 Alt+Tab，唤醒方式只剩托盘图标与全局热键。
-pub fn hide_from_taskbar(hwnd: HWND) -> bool {
+/// 只写扩展样式位，**不做 hide/show**（无闪烁）。
+///
+/// 从 `hide_from_taskbar` 里拆出来的理由：那里的 `SW_HIDE + SW_SHOWNOACTIVATE`
+/// 是为了逼任务栏**重新评估**这个窗口，首次显示用一次就够，代价是一次可见闪烁；
+/// 而「每次显示都补一遍样式」需要的是无闪烁版本。
+///
+/// ⚠️ **幂等且必须可重复调用**：已符合要求时直接返回 `false`，不做任何事。
+/// 一次 `hide()` → `show()` 循环之后 winit 会把窗口属性重置回默认值 ——
+/// `WS_EX_TOOLWINDOW` 被换成 `WS_EX_APPWINDOW`（任务栏按钮复活），
+/// 所以这个校正不能只做一次。
+pub fn enforce_taskbar_exclusion(hwnd: HWND) -> bool {
     unsafe {
         let ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
         let new_ex = (ex | WS_EX_TOOLWINDOW.0) & !WS_EX_APPWINDOW.0;
@@ -134,15 +144,24 @@ pub fn hide_from_taskbar(hwnd: HWND) -> bool {
             return false; // 已是工具窗口样式，无需改动
         }
         SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex as i32);
-        if IsWindowVisible(hwnd).as_bool() {
-            let _ = ShowWindow(hwnd, SW_HIDE);
-            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        }
         log::info!(
             "已校正窗口扩展样式：0x{ex:08x} -> 0x{new_ex:08x}（WS_EX_TOOLWINDOW，退出任务栏与 Alt+Tab）"
         );
         true
     }
+}
+
+pub fn hide_from_taskbar(hwnd: HWND) -> bool {
+    let changed = enforce_taskbar_exclusion(hwnd);
+    if changed {
+        unsafe {
+            if IsWindowVisible(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+        }
+    }
+    changed
 }
 
 /// 应用 Windows 11 系统级亚克力背景、圆角与暗色模式。

@@ -326,14 +326,34 @@ impl Gui {
         }
     }
 
-    /// 首次拿到 HWND 时把窗口标记为工具窗口，从任务栏与 Alt+Tab 移除（只做一次）。
-    /// 诊断开关：`ANYCAST_KEEP_TASKBAR=1` 时保持原样（用于 A/B 对照）。
+    /// 校正窗口样式：无边框（DWM 材质准入）＋ 退出任务栏 / Alt+Tab。
+    ///
+    /// ⚠️ **必须每次显示都调用**（2026-09-25 实测，勿加回「整个函数只做一次」的守卫）：
+    /// 一次 `hide()` → `show()` 循环之后，winit 会把窗口属性重置回默认值 ——
+    /// `WS_EX_TOOLWINDOW` 被换成 `WS_EX_APPWINDOW`（**任务栏按钮复活**），
+    /// 并重新带上 `WS_CAPTION | WS_SYSMENU`（DWM 会把最小化/最大化/关闭三个按钮
+    /// 画在搜索栏上，就是设计稿 65.2 那个「漏斗套叉」脏图）。
+    /// 原先这两处修复都只在首次显示时跑，于是第二次显示起就不再补，
+    /// 坏掉的状态一直留到重启 —— 用户按一次唤醒热键就能触发。
+    ///
+    /// 两个底层函数都自带「无需改动即早退」，重复调用没有成本。
+    ///
+    /// `taskbar_fixed` 现在**只用来区分首次**：首次走带 `SW_HIDE + SW_SHOWNOACTIVATE`
+    /// 的版本（逼任务栏重新评估这个窗口，代价是一次闪烁），此后一律走无闪烁版本。
+    ///
+    /// 诊断开关：`ANYCAST_KEEP_TASKBAR=1` 跳过任务栏校正，
+    /// `ANYCAST_NO_STYLE=1` 跳过 DWM 准入样式校正（均用于 A/B 对照）。
     fn fix_taskbar(&self, hwnd: HWND) {
-        if self.state.borrow().taskbar_fixed {
-            return;
-        }
+        let first = !self.state.borrow().taskbar_fixed;
         if std::env::var("ANYCAST_KEEP_TASKBAR").is_err() {
-            theme::hide_from_taskbar(hwnd);
+            if first {
+                theme::hide_from_taskbar(hwnd);
+            } else {
+                theme::enforce_taskbar_exclusion(hwnd);
+            }
+        }
+        if std::env::var("ANYCAST_NO_STYLE").is_err() {
+            theme::ensure_dwm_admissible(hwnd);
         }
         self.state.borrow_mut().taskbar_fixed = true;
     }
