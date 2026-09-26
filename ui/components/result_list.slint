@@ -209,7 +209,10 @@ export component ResultPane inherits Rectangle {
                 Rectangle {
                     // 设计稿 .items-icon-grid { padding: 6px 0 14px 0 } → 卡片区上下各留 6 / 14
                     height: Math.ceil(sec.count / root.grid-cols) * root.cell-height + 20px;
-                    property <length> cell-w: (grid.visible-width) / root.grid-cols;
+                    // ⚠️ 槽位宽必须**含** gap：设计稿是 6 列 131.33 + 5×8 = 828，
+                    //    列距 139.33。若按 828/6 = 138 当槽位，卡片只有 130 宽、列距 138，
+                    //    比设计稿窄 1.33px（实测列距 138.0 vs 139.0）。
+                    property <length> cell-w: (grid.visible-width + 8px) / root.grid-cols;
                     for j in sec.count : Rectangle {
                         property <int> idx: sec.start + j;
                         x: Math.mod(j, root.grid-cols) * parent.cell-w;
@@ -217,9 +220,15 @@ export component ResultPane inherits Rectangle {
                         width: parent.cell-w;
                         height: root.cell-height;
                         Rectangle {
-                            // 设计稿 .items-icon-grid { gap: 8px }：卡片在槽位里上下左右各内缩 4px
-                            x: 4px;
-                            y: 4px;
+                            // 设计稿：卡片**就是**网格行（行高 98），行与行之间才是 gap 8px。
+                            //   所以卡片顶边贴槽位顶边，8px 全部留在下面（原先 y:4 让首行低 4px）。
+                            // ⚠️ 横向同理：`grid-template-columns: repeat(auto-fill, minmax(115px,1fr))`
+                            //   的 gap 是**列与列之间**，第一列左边紧贴容器内容左边缘、最后一列
+                            //   右边紧贴右边缘（6×131.33 + 5×8 = 828 = 内容宽，两端都齐）。
+                            //   原先写 x:4px 是把 8px 拆成左右各 4 → 整个网格右移 4px，
+                            //   末列右边缘还溢出容器 4px（实测卡左 20.0 vs 设计稿 16.0）。
+                            x: 0px;
+                            y: 0px;
                             width: parent.width - 8px;
                             height: parent.height - 8px;
                             border-radius: 6px;
@@ -236,14 +245,37 @@ export component ResultPane inherits Rectangle {
                                 padding-bottom: 10px;
                                 padding-left: 6px;
                                 padding-right: 6px;
-                                spacing: 6px;
+                                // 设计稿卡内三段间距**各不相同**：
+                                //   .icon-card-glyph { height:36px; margin-bottom:6px }
+                                //   .icon-card-title { line-height:16px }
+                                //   .icon-card-badge { margin-top:4px; line-height:12px; padding:1px 5px }
+                                //   → 卡内 12 + 36 + 6 + 16 + 4 + 14 = 88，+ padding-bottom 10 = 98 ✅
+                                // Slint 的 VerticalLayout 只有一个 spacing，只能凑等价解：
+                                //   这里 squircle 是 38px（设计稿也是 38px，只是塞在 36px 槽位里、
+                                //   上下各溢出 1px），所以它比设计稿多占 2px 布局高度。
+                                //   取 spacing 4 → title 顶边 = 12+38+4 = 54（设计稿 12+36+6 = 54 ✅）
+                                //                  badge 顶边 = 54+16+4 = 74（设计稿 54+16+4 = 74 ✅）
+                                //   实测（相对卡顶）：title 中心 63.7 vs 62.0、badge 84.7 vs 82.0
+                                //   —— 都在 2px 内；改前是 +5.0 / +8.3。
+                                spacing: 4px;
                                 alignment: start;
-                                Squircle { icon: root.items[idx].icon; size: 38px; x: (parent.width - 38px) / 2; }
+                                // 🔴 图标必须**自己**用居中布局摆，不能写
+                                //    `x: (parent.width - 38px) / 2`：在 VerticalLayout 的子级里
+                                //    `parent.width` 解析不到卡片可用宽（实测解析成 ~38px →
+                                //    x≈0），图标会被顶到卡片左内边距上。
+                                //    实测首列图标中心 45.0 vs 设计稿 83.5，整整差一列内边距。
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Squircle { icon: root.items[idx].icon; size: 38px; }
+                                }
                                 Text {
                                     text: root.items[idx].title;
                                     // 设计稿 .icon-card-title { font-size: 11.5px; line-height: 16px }
                                     font-size: 11.5px;
                                     font-weight: 500;
+                                    // ⚠️ 必须钉死 16px：Slint 里 11.5px 文本的自然行高 ≈17.5，
+                                    //    多出的 1.5px 会把下面的徽标一起推低。
+                                    height: 16px;
                                     color: Theme.text-primary;
                                     horizontal-alignment: center;
                                     overflow: elide;

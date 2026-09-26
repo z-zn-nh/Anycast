@@ -102,6 +102,13 @@ export component PinnedShelf inherits Rectangle {
                         // 设计稿：header 的 margin-bottom 6 + track-wrapper 的 padding-top 2 = 8px
                         // 才是第一张卡的顶边。此前写 4px → 卡片整体上移 4px。
                         y: 8px;
+                        // 设计稿 .pinned-track-wrapper { padding: 2px 2px 6px 2px } —— 横向那 2px
+                        // 是**轨道自己**的 padding（section 的 16px 之外再缩 2px），
+                        // 所以首卡左边缘在 18 而不是 16。此前漏了 → 整个置顶架左移 2~3px
+                        // （实测首卡图标中心 59.0 vs 设计稿 62.0）。
+                        // ⚠️ 只加左，不加右：右侧 2px 是滚动区尾部的留白，加进去会让
+                        //    content-width 与末卡右边缘对不上。
+                        x: 2px;
                         spacing: 8px;
                         alignment: start;
                         for item[i] in root.items : Rectangle {
@@ -114,9 +121,22 @@ export component PinnedShelf inherits Rectangle {
                                 // 设计稿 .pinned-card { padding: 8px 4px 6px 4px }
                                 padding-top: 8px;
                                 padding-bottom: 6px;
-                                spacing: 5px;
+                                // 设计稿卡内三段间距**各不相同**：
+                                //   .pinned-card-glyph { height:34px; margin-bottom:5px }
+                                //   .pinned-card-title { line-height:15px }
+                                //   .pinned-card-badge { margin-top:3px; line-height:12px; padding:1px 5px }
+                                //   → 8 + 34 + 5 + 15 + 3 + 14 = 79，+ padding-bottom 6 = 85（卡高 84，溢出 1px）
+                                // Slint 的 VerticalLayout 只有一个 spacing，取 3（= title→badge 的 3）：
+                                //   为了让 glyph→title 仍是 5，把 34px 的 squircle 装进 36px 的槽位
+                                //   （squircle 自己 y:1 → 上下各留 1px，视觉位置不变）。
+                                //   于是 title 顶边 = 8+36+3 = 47、badge 顶边 = 47+15+3 = 65，
+                                //   与设计稿的 8+34+5 = 47 / 47+15+3 = 65 逐值相等。
+                                spacing: 3px;
                                 alignment: start;
-                                Squircle { icon: item.icon; size: 34px; x: (86px - 34px) / 2; }
+                                Rectangle {
+                                    height: 36px;
+                                    Squircle { icon: item.icon; size: 34px; x: (86px - 34px) / 2; y: 1px; }
+                                }
                                 Text {
                                     text: item.title;
                                     // 设计稿 .pinned-card-title { font-size: 11.5px; font-weight: 500;
