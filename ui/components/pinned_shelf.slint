@@ -15,7 +15,14 @@ export component PinnedShelf inherits Rectangle {
     callback context(int, length, length);
 
     property <length> min-x: Math.min(0px, fl.width - fl.content-width);
-    height: 28px + (collapsed ? 0px : 94px);
+    // 对齐设计稿 .pinned-shelf-section 的盒模型（Slint 没有 margin，等效量折进高度）：
+    //   padding-top 4 + header 20 + header margin-bottom 6
+    //   + .pinned-track-wrapper(2 + 84 + 6 = 92) + padding-bottom 4  = 126
+    //   + margin-bottom 2 = 128
+    // 折叠态 = 4 + 20 + 4 = 28，同样 +2 等效 margin。
+    // ⚠️ 此前是 28 + 94 = 122，整整少了 6px → 分类栏/结果区整体上浮，
+    //    与设计稿累积偏差 5~6px（实测分类胶囊顶 173.4 vs 设计 180）。
+    height: (collapsed ? 28px : 126px) + 2px;
     animate height { duration: 220ms; easing: Theme.ease; }
     clip: true;
 
@@ -55,7 +62,10 @@ export component PinnedShelf inherits Rectangle {
             }
         }
         Rectangle {
-            height: root.collapsed ? 0px : 90px;
+            // 设计稿 .pinned-track-wrapper：2(padding-top) + 84(card) + 6(padding-bottom) = 92，
+            // 这里取 98 是因为下面的 HorizontalLayout 用 y:8px 顶到「header margin 6 + track padding 2」
+            // 之后还要留出 track 的 6px padding-bottom。多出的部分透明，不参与视觉。
+            height: root.collapsed ? 0px : 98px;
             opacity: root.collapsed ? 0 : 1;
             animate height { duration: 220ms; easing: Theme.ease; }
             animate opacity { duration: 180ms; easing: Theme.ease; }
@@ -87,9 +97,11 @@ export component PinnedShelf inherits Rectangle {
                 fl := Flickable {
                     interactive: false;
                     content-width: Math.max(self.width, root.items.length * 94px);
-                    content-height: 90px;
+                    content-height: 98px;
                     HorizontalLayout {
-                        y: 4px;
+                        // 设计稿：header 的 margin-bottom 6 + track-wrapper 的 padding-top 2 = 8px
+                        // 才是第一张卡的顶边。此前写 4px → 卡片整体上移 4px。
+                        y: 8px;
                         spacing: 8px;
                         alignment: start;
                         for item[i] in root.items : Rectangle {
@@ -99,7 +111,8 @@ export component PinnedShelf inherits Rectangle {
                             background: root.selected == i ? Theme.selected : (cta.has-hover ? Theme.hover : transparent);
                             animate background { duration: Theme.fast; }
                             VerticalLayout {
-                                padding-top: 9px;
+                                // 设计稿 .pinned-card { padding: 8px 4px 6px 4px }
+                                padding-top: 8px;
                                 padding-bottom: 6px;
                                 spacing: 5px;
                                 alignment: start;
@@ -116,6 +129,13 @@ export component PinnedShelf inherits Rectangle {
                                     overflow: elide;
                                     width: 78px;
                                     x: 4px;
+                                    // ⚠️ 必须钉死行高。Slint 里 11.5px 文本的自然行高 ≈17.5px，
+                                    //    比设计稿的 line-height 15px 高 2.5px → 下面那颗徽标
+                                    //    被整体推低（实测徽标中心 159 vs 设计稿 156）。
+                                    //    VerticalLayout 的子元素**不能写 y**（Slint 报
+                                    //    「The property 'y' cannot be set for elements placed in
+                                    //    this layout」），所以只能从行高这一侧收回来。
+                                    height: 15px;
                                 }
                                 // 设计稿 .pinned-card-badge：9.5px / text-tertiary /
                                 //   bg rgba(255,255,255,0.06) / padding 1px 5px / radius 3px / margin-top 3px

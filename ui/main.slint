@@ -218,8 +218,8 @@ export component AppWindow inherits Window {
                         for c in root.chips : Rectangle {
                             height: 22px; width: ct.preferred-width + 16px; y: 4px;
                             border-radius: 5px; background: Theme.ai-soft;
-                            ct := HorizontalLayout {
-                                x: 8px; spacing: 4px; alignment: center;
+                            ct := HorizontalLayout {   // 居中布局不加 x 偏移，理由见 widgets.slint
+                                spacing: 4px; alignment: center;
                                 Text { text: c.key + ":"; font-size: 11px; color: #c4b5fd; vertical-alignment: center; }
                                 Text { text: c.val; font-size: 11px; font-weight: 600; color: Theme.text-primary; vertical-alignment: center; }
                             }

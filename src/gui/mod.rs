@@ -21,9 +21,14 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
-const HEADER_H: f32 = 26.0;
-const ROW_H: f32 = 42.0;
-const CELL_H: f32 = 92.0;
+// 结果区几何：必须与 ui/components/result_list.slint 的行高逐值对齐，
+// 否则 ensure_visible 的滚动定位会偏移（选中项滚不到视口内 / 滚过头）。
+//   设计稿 .section-header { padding: 8px 0 4px 0; line-height: 1 }        → 23
+//          .search-item  { height: 42px; margin: 1px -6px }               → 44
+//          .icon-card-item 内容 98 + .items-icon-grid { gap: 8px }         → 106
+const HEADER_H: f32 = 23.0;
+const ROW_H: f32 = 44.0;
+const CELL_H: f32 = 106.0;
 
 /// 发起闸门 2 / 3 之前等多久，用来判断用户是不是还在打字。
 ///

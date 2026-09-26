@@ -18,8 +18,10 @@ export component ResultPane inherits Rectangle {
     // 「双击条目立即执行」开关（设置页 · 常规）。关掉后双击只等于选中，
     // 不再直接调起系统默认程序 —— 之前这个开关只写进配置文件，界面根本不看它。
     in property <bool> dbl-launch: true;
-    out property <int> grid-cols: Math.max(1, Math.floor((root.width - 32px) / 115px));
-    out property <length> cell-height: 92px;
+    out property <int> grid-cols: Math.max(1, Math.floor((root.width - 32px + 8px) / 123px));
+    // 设计稿 .icon-card-item 内容高 = padding 12 + glyph 36 + margin 6 + title 16
+    //   + badge(margin 4 + 14) + padding 10 = 98；.items-icon-grid { gap: 8px } → 行距 106
+    out property <length> cell-height: 106px;
     callback select(int);
     callback activate(int);
     callback context(int, length, length);
@@ -68,13 +70,18 @@ export component ResultPane inherits Rectangle {
     // ------------------------------ 列表视图 ------------------------------
     list := ListView {
         visible: root.view-mode != "grid" && root.items.length > 0;
+        // 设计稿 .search-result-pane { padding: 4px 16px 8px 16px }
+        //   横向 16px 由 x/width 承担，纵向 4/8 折进 y/height（ListView 不能设 padding）
         x: 16px;
         width: root.width - 32px;
-        height: root.height;
+        y: 4px;
+        height: root.height - 12px;
         vertical-scrollbar-policy: ScrollBarPolicy.always-off;
         horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
         for row in root.rows : Rectangle {
-            height: row.is-header ? 26px : 42px;
+            // 设计稿 .section-header { padding: 8px 0 4px 0; line-height: 1 } → 23px
+            //          .search-item  { height: 42px; margin: 1px -6px } → 行距 44px
+            height: row.is-header ? 23px : 44px;
             if row.is-header : Text {
                 x: 0px;
                 text: row.header;
@@ -83,13 +90,14 @@ export component ResultPane inherits Rectangle {
                 // 设计稿 .section-header { color: rgba(255,255,255,0.45); letter-spacing: 0.06em }
                 color: Theme.dark ? #ffffff73 : #00000073;
                 letter-spacing: 0.66px;
-                y: 9px;
+                y: 8px;
             }
             if !row.is-header : Rectangle {
                 x: -6px;
                 width: parent.width + 12px;
+                // 设计稿 .search-item 的 margin 1px 上下 → 44px 槽位里 42px 高亮
                 y: 1px;
-                height: 40px;
+                height: 42px;
                 border-radius: 8px;
                 background: root.selected == row.index ? Theme.selected : (rta.has-hover ? Theme.hover : transparent);
                 // 设计稿 .search-item.selected { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08) }
@@ -100,7 +108,7 @@ export component ResultPane inherits Rectangle {
                     padding-left: 6px;
                     padding-right: 6px;
                     spacing: 12px;
-                    Squircle { icon: row.item.icon; size: 28px; y: 6px; }
+                    Squircle { icon: row.item.icon; size: 28px; y: 7px; }
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
@@ -113,7 +121,7 @@ export component ResultPane inherits Rectangle {
                             overflow: elide;
                             max-width: 300px;
                         }
-                        Badge { text: row.item.badge; y: 11px; }
+                        Badge { text: row.item.badge; y: 12px; }
                     }
                     Text {
                         text: root.smart && row.item.reason != "" ? row.item.reason : row.item.subtitle;
@@ -175,7 +183,8 @@ export component ResultPane inherits Rectangle {
         visible: root.view-mode == "grid" && root.items.length > 0;
         x: 16px;
         width: root.width - 32px;
-        height: root.height;
+        y: 4px;
+        height: root.height - 12px;
         vertical-scrollbar-policy: ScrollBarPolicy.always-off;
         horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
         content-width: self.visible-width;
@@ -186,7 +195,7 @@ export component ResultPane inherits Rectangle {
             for sec in root.sections : VerticalLayout {
                 spacing: 0px;
                 Rectangle {
-                    height: 26px;
+                    height: 23px;
                     Text {
                         x: 0px;
                         text: sec.title;
@@ -194,23 +203,25 @@ export component ResultPane inherits Rectangle {
                         font-weight: 600;
                         color: Theme.dark ? #ffffff73 : #00000073;
                         letter-spacing: 0.66px;
-                        y: 9px;
+                        y: 8px;
                     }
                 }
                 Rectangle {
-                    height: Math.ceil(sec.count / root.grid-cols) * root.cell-height;
+                    // 设计稿 .items-icon-grid { padding: 6px 0 14px 0 } → 卡片区上下各留 6 / 14
+                    height: Math.ceil(sec.count / root.grid-cols) * root.cell-height + 20px;
                     property <length> cell-w: (grid.visible-width) / root.grid-cols;
                     for j in sec.count : Rectangle {
                         property <int> idx: sec.start + j;
                         x: Math.mod(j, root.grid-cols) * parent.cell-w;
-                        y: Math.floor(j / root.grid-cols) * root.cell-height;
+                        y: Math.floor(j / root.grid-cols) * root.cell-height + 6px;
                         width: parent.cell-w;
                         height: root.cell-height;
                         Rectangle {
-                            x: 2px;
-                            y: 2px;
-                            width: parent.width - 4px;
-                            height: parent.height - 4px;
+                            // 设计稿 .items-icon-grid { gap: 8px }：卡片在槽位里上下左右各内缩 4px
+                            x: 4px;
+                            y: 4px;
+                            width: parent.width - 8px;
+                            height: parent.height - 8px;
                             border-radius: 6px;
                             // 设计稿 .icon-card-item.selected { background: rgba(255,255,255,0.12); box-shadow: 0 0 0 1px rgba(255,255,255,0.18) }
                             background: root.selected == idx
@@ -221,7 +232,8 @@ export component ResultPane inherits Rectangle {
                             animate background { duration: Theme.fast; }
                             VerticalLayout {
                                 padding-top: 12px;
-                                padding-bottom: 8px;
+                                // 设计稿 .icon-card-item { padding: 12px 6px 10px 6px }
+                                padding-bottom: 10px;
                                 padding-left: 6px;
                                 padding-right: 6px;
                                 spacing: 6px;
@@ -229,7 +241,8 @@ export component ResultPane inherits Rectangle {
                                 Squircle { icon: root.items[idx].icon; size: 38px; x: (parent.width - 38px) / 2; }
                                 Text {
                                     text: root.items[idx].title;
-                                    font-size: 11px;
+                                    // 设计稿 .icon-card-title { font-size: 11.5px; line-height: 16px }
+                                    font-size: 11.5px;
                                     font-weight: 500;
                                     color: Theme.text-primary;
                                     horizontal-alignment: center;

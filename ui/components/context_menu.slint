@@ -108,8 +108,7 @@ export component Toast inherits Rectangle {
     drop-shadow-color: #00000066;
     opacity: shown ? 1 : 0;
     animate opacity { duration: 180ms; easing: Theme.ease; }
-    hl := HorizontalLayout {
-        x: 12px;
+    hl := HorizontalLayout {            // 居中布局不加 x 偏移，理由见 widgets.slint
         spacing: 8px;
         alignment: center;
         Icon {

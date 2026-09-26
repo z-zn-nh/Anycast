@@ -85,8 +85,15 @@ export component GhostButton inherits Rectangle {
     border-radius: btn-radius;
     background: active ? Theme.active : ta.has-hover ? hover-bg : transparent;
     animate background { duration: Theme.fast; }
+    // ⚠️ 居中布局**不能**再写 `x: root.padding-x`。
+    //   Slint 里布局元素（Horizontal/Vertical/GridLayout）的 `width` **默认是父级的 100%**，
+    //   再给一个 `x` 偏移 = 把「居中参考系」整体右移 padding-x：
+    //   内容会贴到右边缘。实测活动分类标签：左空 21.3px / 右空 1.3px
+    //   （设计稿 `.category-tab { padding: 0 10px }` 两边各 10px）——就是用户说的
+    //   「按钮文字没居中」。
+    //   父级宽度本来就是 `preferred-width + padding-x * 2`，所以正确做法是
+    //   **让布局铺满父级（不写 x）+ `alignment: center`**，两边自然各留 padding-x。
     layout := HorizontalLayout {
-        x: root.padding-x;
         spacing: root.gap;
         alignment: center;
         if root.icon != "" : Icon {
@@ -352,8 +359,7 @@ export component ActionButton inherits Rectangle {
     border-width: 1px;
     border-color: danger ? #ef444459 : Theme.border-subtle;
     animate background { duration: Theme.fast; }
-    hl := HorizontalLayout {
-        x: 12px;
+    hl := HorizontalLayout {            // 居中布局不加 x 偏移，理由见上面 GhostButton
         spacing: 6px;
         alignment: center;
         if root.icon != "" : Icon {

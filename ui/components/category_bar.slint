@@ -29,8 +29,7 @@ component Tab inherits Rectangle {
                 : (small ? #0000000a : #0000000d))
             : transparent);
     animate background { duration: Theme.fast; }
-    hl := HorizontalLayout {
-        x: small ? 8px : 10px;
+    hl := HorizontalLayout {            // 居中布局不加 x 偏移，理由见 widgets.slint
         spacing: small ? 4px : 6px;
         alignment: center;
         Icon {
@@ -59,8 +58,10 @@ export component CategoryBar inherits Rectangle {
     in property <string> clip-sub: "all";
     callback set-category(string);
     callback set-clip-sub(string);
-    // 对齐设计稿：容器 height 32px / padding 0 16px（分类展开剪贴板子标签时增高）
-    height: category == "clipboard" ? 60px : 32px;
+    // 对齐设计稿：容器 height 32px / padding 0 16px / margin-bottom 2px（分类展开剪贴板子标签时增高）
+    //   Slint 无 margin → 把 2px 折进高度：常态 34px；剪贴板态 32 + 26(子栏) + 2 = 60px。
+    //   ⚠️ 常态此前写 32px，比设计稿矮 2px（叠在置顶架的 6px 上，结果区一共上浮 8px）。
+    height: category == "clipboard" ? 60px : 34px;
     animate height { duration: 160ms; easing: Theme.ease; }
     clip: true;
     VerticalLayout {

@@ -15,8 +15,7 @@ component FilterPill inherits Rectangle {
     border-radius: 4px;
     background: (active || open) ? Theme.active : (ta.has-hover ? Theme.hover : Theme.subtle);
     animate background { duration: Theme.fast; }
-    hl := HorizontalLayout {
-        x: 8px;
+    hl := HorizontalLayout {            // 居中布局不加 x 偏移，理由见 widgets.slint
         spacing: 5px;
         alignment: center;
         Icon { name: root.icon; size: 12px; tint: root.active ? Theme.text-primary : Theme.text-soft; y: 6px; }
@@ -73,7 +72,7 @@ export component FilterShelf inherits Rectangle {
             border-radius: 4px;
             background: rta.has-hover ? Theme.hover : transparent;
             rl := HorizontalLayout {
-                x: 8px; spacing: 4px; alignment: center;
+                spacing: 4px; alignment: center;
                 Icon { name: "reset"; size: 11px; tint: Theme.text-soft; y: 6.5px; }
                 Text { text: "重置"; font-size: 11px; color: Theme.text-soft; vertical-alignment: center; }
             }
