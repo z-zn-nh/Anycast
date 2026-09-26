@@ -303,11 +303,18 @@ export component SettingsModal inherits Rectangle {
                         Group {
                             title: "快捷唤醒与启动";
                             Row {
-                                label: "全局唤醒快捷键"; desc: "在任意窗口或全屏程序下呼出 Anycast 居中浮动搜索窗口（点击键帽重新录制）";
-                                Rectangle {
-                                    width: wk.width; height: 26px;
-                                    wk := Keycap { label: Settings.recording-id == "__wake__" ? "按下按键..." : Settings.wake-hotkey; recording: Settings.recording-id == "__wake__"; }
-                                    TouchArea { mouse-cursor: pointer; clicked => { Settings.hotkey-record("__wake__"); } }
+                                label: "全局唤醒快捷键"; desc: "在任意窗口或全屏程序下呼出 Anycast 居中浮动搜索窗口（点键帽重录；点「检测」验证按键能否真正送达）";
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: center;
+                                    Rectangle {
+                                        width: wk.width; height: 26px;
+                                        wk := Keycap { label: Settings.recording-id == "__wake__" ? "按下按键..." : Settings.wake-hotkey; recording: Settings.recording-id == "__wake__"; }
+                                        TouchArea { mouse-cursor: pointer; clicked => { Settings.hotkey-record("__wake__"); } }
+                                    }
+                                    // 独立「检测」入口。不能靠「重新录制」代替：组合键被别的程序
+                                    // 用低级键盘钩子吞掉时，界面**根本收不到这个键**，录不进去。
+                                    ActionButton { label: "检测"; icon: "keyboard"; clicked => { Settings.action("verify-wake"); } }
                                 }
                             }
                             Row { label: "开机自启动"; desc: "登录 Windows 桌面后自动在后台托盘静默就绪";

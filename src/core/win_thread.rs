@@ -17,11 +17,14 @@ use windows::Win32::System::DataExchange::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
-use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, SendInput, UnregisterHotKey, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VIRTUAL_KEY,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostMessageW, PostQuitMessage, RegisterClassW,
-    TranslateMessage, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLIPBOARDUPDATE, WM_HOTKEY,
-    WNDCLASSW,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, KillTimer, PostMessageW, PostQuitMessage,
+    RegisterClassW, SetTimer, TranslateMessage, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_CLIPBOARDUPDATE, WM_HOTKEY, WM_TIMER, WNDCLASSW,
 };
 
 const WM_ANYCAST_CMD: u32 = WM_APP + 1;
@@ -29,6 +32,14 @@ const CF_UNICODETEXT: u32 = 13;
 pub const WAKE_HOTKEY_ID: i32 = 1;
 pub const BINDING_ID_BASE: i32 = 0x1000;
 const PROBE_ID: i32 = 0x7FF0;
+/// 投递自检的**对照**组合键。它只用来证明「本机此刻注入得动」。
+/// 选 F13 是因为没有任何程序会响应它，注入它绝无副作用。
+const VERIFY_CONTROL_ID: i32 = 0x7FF1;
+const VERIFY_TIMER_ID: usize = 0xA1;
+/// 单相等待上限。注入到 WM_HOTKEY 是毫秒级，500ms 已经非常宽松。
+const VERIFY_WAIT_MS: u32 = 500;
+/// 自检用的对照组合键（VK_F13 = 0x7C）。
+const VERIFY_CONTROL_VK: u32 = 0x7C;
 
 pub enum SysCommand {
     SetWakeHotkey(Option<HotkeySpec>),
@@ -36,8 +47,74 @@ pub enum SysCommand {
     SetBindings(Vec<(i32, HotkeySpec)>),
     /// 冲突探测：尝试注册再立即注销
     Probe(HotkeySpec, Sender<Result<(), String>>),
+    /// 投递自检：对**当前已注册的唤醒热键**真注入一次，看 `WM_HOTKEY` 到不到。
+    ///
+    /// 与 `Probe` 的区别是本质性的：`Probe` 只证明「注册得进去」，
+    /// 这个证明「按键送得到」。后者才是用户能感知的那件事。
+    VerifyWakeDelivery(Sender<WakeDelivery>),
     SetClipboardListening(bool),
     Quit,
+}
+
+/// 唤醒热键「注册成功之后，按键到底到不到」的实测结论。
+///
+/// 存在的理由：`RegisterHotKey` 成功只说明注册表里有了这一条。别的程序可以用
+/// `SetWindowsHookEx(WH_KEYBOARD_LL)` 装一个全局低级键盘钩子，在回调里
+/// `return 1` 把键**在投递之前**吃掉。钩子不占注册表，所以
+/// `ERROR_HOTKEY_ALREADY_REGISTERED(1409)` 永远不会出现 —— 界面显示注册好了、
+/// 按下去毫无反应，且没有任何错误可看。**唯一能发现它的办法就是真按一次。**
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WakeDelivery {
+    /// 注入后真收到了 `WM_HOTKEY`。
+    Delivered,
+    /// 对照组合键收到了、目标没收到 → 有程序用键盘钩子把它吞了。
+    Swallowed,
+    /// 连对照组合键都收不到 → 本机此刻的注入自检不成立，**不能**下结论。
+    ///
+    /// 这一档不能省：`Alt+Space` 家族本身就存在「合成按键打不进去」的情况
+    /// （系统菜单加速键）。少了它，就会把「测不了」误报成「被占用」。
+    Inconclusive,
+    /// 当前没有已注册的唤醒热键。
+    NotRegistered,
+}
+
+impl WakeDelivery {
+    /// 给用户看的一句话。措辞刻意分开：只有 `Swallowed` 才允许说「被占用」。
+    ///
+    /// 写成**独立成句**的形式，这样既能接在「— 」后面，也能接在
+    /// 「⚠ 唤醒快捷键 X 」后面，不必为两个入口各写一份文案（文案分叉 = 迟早不一致）。
+    pub fn describe(self) -> &'static str {
+        match self {
+            WakeDelivery::Delivered => "按键投递正常",
+            WakeDelivery::Swallowed => {
+                "按键收不到 —— 有程序用低级键盘钩子占用了它。\
+                 这种占用不占注册表，所以注册会成功、也不会报冲突，请换一个组合键"
+            }
+            WakeDelivery::Inconclusive => "无法判定 —— 本机的按键注入自检不成立（对照组合键也收不到）",
+            WakeDelivery::NotRegistered => "当前未注册唤醒快捷键",
+        }
+    }
+}
+
+/// 自检的两个阶段。对照先跑，通过了才轮到目标 ——
+/// 顺序不能反，否则「目标收不到」无法归因。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VerifyPhase {
+    Control,
+    Target,
+}
+
+struct VerifyRun {
+    reply: Sender<WakeDelivery>,
+    phase: VerifyPhase,
+}
+
+/// `WM_HOTKEY` 进来时自检该怎么认领它。抽成枚举是为了让「判定」与「动作」
+/// 分成两次借用，避免同一把 `RefCell` 被同时可变借用。
+enum VerifyStep {
+    Unrelated,
+    ControlPassed,
+    TargetDelivered,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +139,8 @@ struct ThreadState {
     wake: Option<HotkeySpec>,
     bindings: Vec<(i32, HotkeySpec)>,
     clipboard_listening: bool,
+    /// 正在跑的投递自检。同一时刻最多一个。
+    verify: Option<VerifyRun>,
 }
 
 thread_local! {
@@ -118,6 +197,13 @@ impl SystemBus {
         rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap_or_else(|_| Err("探测超时".into()))
     }
 
+    /// 唤醒热键投递自检（阻塞等待）。两相各 500ms 上限，留足余量给 3s。
+    pub fn verify_wake_delivery(&self) -> WakeDelivery {
+        let (tx, rx) = unbounded::<WakeDelivery>();
+        self.post(SysCommand::VerifyWakeDelivery(tx));
+        rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or(WakeDelivery::Inconclusive)
+    }
+
     pub fn quit(&self) {
         self.post(SysCommand::Quit);
     }
@@ -163,6 +249,7 @@ fn run_thread(rx: Receiver<SysCommand>, handler: SysHandler, ready: Sender<isize
                 wake: None,
                 bindings: Vec::new(),
                 clipboard_listening: false,
+                verify: None,
             })
         });
         let _ = ready.send(hwnd.0 as isize);
@@ -205,9 +292,71 @@ unsafe fn register(hwnd: HWND, id: i32, spec: &HotkeySpec) -> Result<(), String>
     }
 }
 
+/// 把一个组合键展开成「按下/抬起」序列。
+///
+/// ⚠️ **整串必须压进一次 `SendInput`**：分多次调用、或在修饰键与主键之间留间隔，
+/// 系统会把修饰键的按下当成「进入菜单模式」，随后的主键被当菜单激活键吞掉。
+/// 实测（见 skill `windows-global-hotkey-verification`）`Ctrl+Alt+Space` 与
+/// `Alt+Tab` 都会因此**假失败**。顺序固定为「修饰键正序按下 → 主键按下/抬起 →
+/// 修饰键逆序抬起」，抬起的顺序与按下严格相反，否则会留下卡住的修饰键。
+fn key_sequence(spec: &HotkeySpec) -> Vec<(u16, bool)> {
+    const ORDER: [(u32, u16); 4] = [
+        (MOD_CONTROL.0, 0x11), // VK_CONTROL
+        (MOD_ALT.0, 0x12),     // VK_MENU
+        (MOD_SHIFT.0, 0x10),   // VK_SHIFT
+        (MOD_WIN.0, 0x5B),     // VK_LWIN
+    ];
+    let mods: Vec<u16> = ORDER.iter().filter(|(flag, _)| spec.modifiers & flag != 0).map(|(_, vk)| *vk).collect();
+    let main = spec.vk as u16;
+    let mut seq: Vec<(u16, bool)> = mods.iter().map(|&vk| (vk, false)).collect();
+    seq.push((main, false));
+    seq.push((main, true));
+    seq.extend(mods.iter().rev().map(|&vk| (vk, true)));
+    seq
+}
+
+/// 注入一个组合键。返回是否整串都发出去了。
+unsafe fn inject_hotkey(spec: &HotkeySpec) -> bool {
+    let inputs: Vec<INPUT> = key_sequence(spec)
+        .into_iter()
+        .map(|(vk, up)| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VIRTUAL_KEY(vk),
+                    wScan: 0,
+                    dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        })
+        .collect();
+    let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize;
+    sent == inputs.len()
+}
+
+/// 对照组合键：Ctrl+Alt+Shift+F13。
+fn verify_control_spec() -> HotkeySpec {
+    HotkeySpec { modifiers: MOD_CONTROL.0 | MOD_ALT.0 | MOD_SHIFT.0, vk: VERIFY_CONTROL_VK }
+}
+
+/// 收尾一次自检：停定时器、注销对照键、把结论回给调用方。
+unsafe fn finish_verify(st: &mut ThreadState, outcome: WakeDelivery) {
+    let _ = KillTimer(Some(st.hwnd), VERIFY_TIMER_ID);
+    let _ = UnregisterHotKey(Some(st.hwnd), VERIFY_CONTROL_ID);
+    if let Some(run) = st.verify.take() {
+        let _ = run.reply.send(outcome);
+    }
+}
+
 /// 处理挂起的命令。**返回待发事件，而不是自己回调 handler** ——
 /// 本函数是在 `STATE.with(|s| s.borrow_mut())` 持有期间被调用的，
 /// 在里面回调会让 handler 重入同一把 RefCell 借用。由 `wndproc` 在借用释放后再发。
+///
+/// ⚠️ 同理，自检**不能在这里泵消息**：泵消息会重入 `wndproc`，
+/// 而那时 `STATE` 还被可变借用着 → panic。这里只负责「发键 + 起定时器」，
+/// `WM_HOTKEY` / `WM_TIMER` 由主消息循环在借用释放后交回来。
 unsafe fn handle_commands(st: &mut ThreadState) -> Vec<SysEvent> {
     let mut evs = Vec::new();
     while let Ok(cmd) = st.rx.try_recv() {
@@ -250,6 +399,29 @@ unsafe fn handle_commands(st: &mut ThreadState) -> Vec<SysEvent> {
                     let _ = UnregisterHotKey(Some(st.hwnd), PROBE_ID);
                 }
                 let _ = reply.send(r);
+            }
+            SysCommand::VerifyWakeDelivery(reply) => {
+                // 上一次还没跑完又来一次：给「无法判定」，别把状态搅乱。
+                if st.verify.is_some() {
+                    let _ = reply.send(WakeDelivery::Inconclusive);
+                    continue;
+                }
+                if st.wake.is_none() {
+                    let _ = reply.send(WakeDelivery::NotRegistered);
+                    continue;
+                }
+                // 对照键注册不上（几乎不会）：环境本身不成立，直接判「无法判定」。
+                if register(st.hwnd, VERIFY_CONTROL_ID, &verify_control_spec()).is_err() {
+                    let _ = reply.send(WakeDelivery::Inconclusive);
+                    continue;
+                }
+                st.verify = Some(VerifyRun { reply, phase: VerifyPhase::Control });
+                if inject_hotkey(&verify_control_spec()) {
+                    SetTimer(Some(st.hwnd), VERIFY_TIMER_ID, VERIFY_WAIT_MS, None);
+                } else {
+                    // 连对照键都发不出去 → 这台机器此刻注入不了，不能下结论。
+                    finish_verify(st, WakeDelivery::Inconclusive);
+                }
             }
             SysCommand::SetClipboardListening(on) => {
                 if on && !st.clipboard_listening {
@@ -297,6 +469,52 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     match msg {
         WM_HOTKEY => {
             let id = wparam.0 as i32;
+            // 投递自检期间收到的热键消息**不能**当作用户按键派发出去，
+            // 否则「测一下」会顺手把窗口显示/隐藏一次。先让自检认领它。
+            // 借用与动作分两步：认领要 borrow_mut，收尾也要 borrow_mut，
+            // 合成一步会同时持有两个可变借用。
+            let claim = STATE.with(|s| {
+                let mut guard = s.borrow_mut();
+                let Some(st) = guard.as_mut() else { return VerifyStep::Unrelated };
+                let Some(run) = st.verify.as_ref() else { return VerifyStep::Unrelated };
+                match (run.phase, id) {
+                    // 对照通过 → 轮到目标键
+                    (VerifyPhase::Control, VERIFY_CONTROL_ID) => VerifyStep::ControlPassed,
+                    // 目标键真收到了 → 按键投递正常
+                    (VerifyPhase::Target, WAKE_HOTKEY_ID) => VerifyStep::TargetDelivered,
+                    _ => VerifyStep::Unrelated,
+                }
+            });
+            match claim {
+                VerifyStep::Unrelated => {}
+                VerifyStep::ControlPassed => {
+                    STATE.with(|s| {
+                        let mut guard = s.borrow_mut();
+                        let Some(st) = guard.as_mut() else { return };
+                        let _ = KillTimer(Some(st.hwnd), VERIFY_TIMER_ID);
+                        let _ = UnregisterHotKey(Some(st.hwnd), VERIFY_CONTROL_ID);
+                        if let Some(run) = st.verify.as_mut() {
+                            run.phase = VerifyPhase::Target;
+                        }
+                        match st.wake {
+                            Some(spec) if inject_hotkey(&spec) => {
+                                SetTimer(Some(st.hwnd), VERIFY_TIMER_ID, VERIFY_WAIT_MS, None);
+                            }
+                            Some(_) => finish_verify(st, WakeDelivery::Inconclusive),
+                            None => finish_verify(st, WakeDelivery::NotRegistered),
+                        }
+                    });
+                    return LRESULT(0);
+                }
+                VerifyStep::TargetDelivered => {
+                    STATE.with(|s| {
+                        if let Some(st) = s.borrow_mut().as_mut() {
+                            finish_verify(st, WakeDelivery::Delivered);
+                        }
+                    });
+                    return LRESULT(0);
+                }
+            }
             let handler = STATE.with(|s| s.borrow().as_ref().map(|st| Arc::clone(&st.handler)));
             if let Some(h) = handler {
                 if id == WAKE_HOTKEY_ID {
@@ -305,6 +523,21 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     h(SysEvent::BindingHotkey(id));
                 }
             }
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == VERIFY_TIMER_ID => {
+            // 该到的时候没到。对照相超时 = 测不了；目标相超时 = 被吞了
+            // （目标相只在对照通过之后才会进入，所以这里归因是确定的）。
+            STATE.with(|s| {
+                let mut guard = s.borrow_mut();
+                let Some(st) = guard.as_mut() else { return };
+                let Some(phase) = st.verify.as_ref().map(|r| r.phase) else { return };
+                let outcome = match phase {
+                    VerifyPhase::Control => WakeDelivery::Inconclusive,
+                    VerifyPhase::Target => WakeDelivery::Swallowed,
+                };
+                finish_verify(st, outcome);
+            });
             LRESULT(0)
         }
         WM_CLIPBOARDUPDATE => {
@@ -339,5 +572,59 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::hotkey::parse_hotkey;
+
+    fn spec(text: &str) -> HotkeySpec {
+        parse_hotkey(text).expect("测试用的组合键必须可解析")
+    }
+
+    #[test]
+    fn injection_sequence_is_one_shot_and_symmetric() {
+        // 整串一次发完、修饰键逆序抬起。这是探针层面踩过的坑：
+        // 拆成多次发送会让系统进「菜单模式」把主键吞掉，制造假失败。
+        assert_eq!(
+            key_sequence(&spec("Alt+Space")),
+            vec![(0x12, false), (0x20, false), (0x20, true), (0x12, true)]
+        );
+        assert_eq!(
+            key_sequence(&spec("Ctrl+Alt+T")),
+            vec![(0x11, false), (0x12, false), (0x54, false), (0x54, true), (0x12, true), (0x11, true)]
+        );
+        // 抬起顺序必须是按下顺序的严格逆序，否则会留下卡住的修饰键
+        let seq = key_sequence(&spec("Ctrl+Shift+Alt+P"));
+        let downs: Vec<u16> = seq.iter().filter(|(_, up)| !up).map(|(vk, _)| *vk).collect();
+        let mut ups: Vec<u16> = seq.iter().filter(|(_, up)| *up).map(|(vk, _)| *vk).collect();
+        ups.reverse();
+        assert_eq!(downs, ups);
+    }
+
+    #[test]
+    fn only_swallowed_may_blame_the_key() {
+        // 本项目的老规矩：每个失败都要能区分「环境不行」和「被测不行」。
+        // 「被钩子吞了」和「这台机器测不了」是两句必须不同的话，
+        // 而且只有前者允许说「被占用」。
+        let swallowed = WakeDelivery::Swallowed.describe();
+        let inconclusive = WakeDelivery::Inconclusive.describe();
+        assert!(swallowed.contains("键盘钩子"), "被吞的说明要点出真因: {swallowed}");
+        assert!(!inconclusive.contains("拦截") && !inconclusive.contains("占用"),
+                "判不了的时候不能把责任推给组合键: {inconclusive}");
+        assert_ne!(swallowed, inconclusive);
+        assert_ne!(WakeDelivery::Delivered.describe(), swallowed);
+    }
+
+    #[test]
+    fn control_combo_is_never_a_real_binding() {
+        // 对照键必须是「没有程序会响应」的组合，否则自检本身就有副作用
+        let c = verify_control_spec();
+        assert_eq!(c.vk, 0x7C, "VK_F13");
+        assert_eq!(c.modifiers, MOD_CONTROL.0 | MOD_ALT.0 | MOD_SHIFT.0);
+        assert_ne!(VERIFY_CONTROL_ID, PROBE_ID);
+        assert_ne!(VERIFY_CONTROL_ID, WAKE_HOTKEY_ID);
     }
 }

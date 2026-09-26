@@ -3,6 +3,7 @@
 pub mod dialogs;
 pub mod theme;
 
+use crate::core::win_thread::WakeDelivery;
 use crate::core::{hotkey, launcher, AppCore};
 use crate::models::{
     BackendNotification, HotkeyBindingModel, ItemType, SearchItemModel, SearchMode, SearchRequest, SearchScopeFilter,
@@ -551,6 +552,48 @@ impl Gui {
                 g.ui.set_toast_shown(false);
             }
         });
+    }
+
+    // ------------------------------------------------------------------
+    // 唤醒热键投递自检
+    // ------------------------------------------------------------------
+
+    /// 真注入一次按键，验证「唤醒快捷键注册成功之后，按键到底到不到」。
+    ///
+    /// **必须放后台线程。** 自检最长要等两相 × 500ms；占着 UI 线程会让整个面板
+    /// 卡住，而用户此刻正盯着它看，卡顿会被当成「点了没反应」。
+    ///
+    /// ⚠️ 副作用：若该组合键被别的程序占用，**对方会真的响应**（例如弹出它自己的
+    /// 面板）。这是唯一能区分「被钩子吞掉」和「一切正常」的办法 —— 不能因为
+    /// 有副作用就不测，但也不能不告诉用户。所以文案里写明了这一点。
+    fn verify_wake_async(self: &Rc<Self>, recorded: bool) {
+        self.toast("正在检测唤醒快捷键能否真正送达…（若被别的程序占用，它可能会弹出自己的面板）", "keyboard");
+        let core = Arc::clone(&self.core);
+        let ui_weak = self.ui.as_weak();
+        std::thread::spawn(move || {
+            let d = core.verify_wake_delivery();
+            let _ = ui_weak.upgrade_in_event_loop(move |_| {
+                with_gui(|g| g.report_wake_delivery(d, recorded));
+            });
+        });
+    }
+
+    /// 把自检结论说给用户听。
+    ///
+    /// `recorded` = 这次是刚录完键（措辞带上「已更新」），否则是用户主动点「检测」。
+    /// 只有 `Delivered` 允许用「✓」；其余一律「⚠」—— 把 `Inconclusive` 也报成
+    /// 成功就是在骗人，而这条链路的整个毛病正是「静默地假装正常」。
+    fn report_wake_delivery(self: &Rc<Self>, d: WakeDelivery, recorded: bool) {
+        let key = hotkey::normalize(&self.ui.global::<Settings>().get_wake_hotkey());
+        let ok = d == WakeDelivery::Delivered;
+        let text = match (d, recorded, ok) {
+            (WakeDelivery::NotRegistered, _, _) => "⚠ 唤醒快捷键当前未注册，无法检测".to_string(),
+            (_, true, true) => format!("唤醒快捷键已更新: {key} — {}", d.describe()),
+            (_, true, false) => format!("⚠ 已保存唤醒快捷键 {key}：{}", d.describe()),
+            (_, false, true) => format!("唤醒快捷键 {key}：{}", d.describe()),
+            (_, false, false) => format!("⚠ 唤醒快捷键 {key}：{}", d.describe()),
+        };
+        self.toast(&text, if ok { "check" } else { "alert" });
     }
 
     // ------------------------------------------------------------------
@@ -1279,7 +1322,12 @@ impl Gui {
             "__wake__" => match self.core.set_wake_hotkey(combo) {
                 Ok(()) => {
                     g.set_wake_hotkey(ss(&hotkey::normalize(combo)));
-                    self.toast(&format!("唤醒快捷键已更新: {}", hotkey::normalize(combo)), "check");
+                    // 落盘成功 ≠ 按得到。`set_wake_hotkey` 里的探测只能证明
+                    // 「注册得进去」；别的程序用 WH_KEYBOARD_LL 钩子吞键时，
+                    // 注册照样成功、冲突照样不报。这里真按一次，把结论当面说清。
+                    // 顺序上安全：SetWakeHotkey 与这次自检走同一条命令队列，
+                    // 一定先注册完才轮到自检。
+                    self.verify_wake_async(true);
                 }
                 Err(e) => self.toast(&format!("⚠ {e}"), "alert"),
             },
@@ -1982,6 +2030,12 @@ impl Gui {
                         Err(e) => g.toast(&format!("清理缓存失败: {e}"), "x"),
                     }
                     g.sync_stats_to_ui();
+                }
+                "verify-wake" => {
+                    // 为什么需要独立入口：`Alt+Space` 被钩子吞掉时，**界面根本录不到
+                    // 这个键**（老实验已证：外部程序占住组合键，主键不会送到本进程），
+                    // 所以「重新录制」这条路走不通 —— 必须给一个不依赖按键送达的检测入口。
+                    g.verify_wake_async(false);
                 }
                 "rebuild-index" => {
                     g.core.rebuild_index();

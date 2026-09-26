@@ -17,6 +17,7 @@
   python tools/rt_probe.py wheel <delta> <lx> <ly> [out]  # 滚轮（delta>0 上滚）
   python tools/rt_probe.py keys <combo> [out]
   python tools/rt_probe.py type <text> [out]
+  python tools/rt_probe.py grabdelay <ms> <out>    # 睡 ms 再抓（等异步结果）
   python tools/rt_probe.py cfg                    # 打印配置关键项
 """
 import ctypes
@@ -312,6 +313,12 @@ if __name__ == "__main__":
             grab(sys.argv[3])
         else:
             print("typed")
+    elif cmd == "grabdelay":
+        # 异步动作（如热键投递自检、后台索引）的结论不是点击后立刻出现的。
+        # 先睡再抓，避免为了等结果把「点击」和「抓图」拆成两个进程 —— 那样中间
+        # 焦点会跑掉，`hide_on_blur` 一开就抓到背后的窗口。
+        time.sleep(int(sys.argv[2]) / 1000.0)
+        grab(sys.argv[3])
     elif cmd == "cfg":
         print(json.dumps(cfg(sys.argv[2].split(",") if len(sys.argv) > 2 else None),
                          ensure_ascii=False, indent=2))

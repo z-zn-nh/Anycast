@@ -20,7 +20,7 @@ use search::{SearchEngine, SearchProvider};
 use settings::AppSettings;
 use std::sync::Arc;
 use storage::{HotkeyRecord, Storage};
-use win_thread::{SysEvent, SystemBus, BINDING_ID_BASE, WAKE_HOTKEY_ID};
+use win_thread::{SysEvent, SystemBus, WakeDelivery, BINDING_ID_BASE, WAKE_HOTKEY_ID};
 
 pub type Notifier = Arc<dyn Fn(BackendNotification) + Send + Sync>;
 
@@ -482,6 +482,22 @@ impl AppCore {
             return Ok(());
         }
         self.bus.probe(spec)
+    }
+
+    /// 实测「唤醒快捷键注册成功之后，按键到底到不到」。
+    ///
+    /// 为什么需要它：`RegisterHotKey` 成功只说明注册表里有了这一条。别的程序可以用
+    /// `SetWindowsHookEx(WH_KEYBOARD_LL)` 装一个全局钩子把键吞掉 —— 钩子不占注册表，
+    /// 所以 1409 永远不会出现，界面显示正常、按键永远没反应，用户拿不到任何线索。
+    /// **唯一能发现它的办法就是真按一次**（见 `doc/实施进展与已知问题.md` §12）。
+    ///
+    /// ⚠️ **只在用户主动改唤醒快捷键时调用。** 它会真的注入一次按键，副作用是：
+    /// 若该组合键被别的程序占用，**对方会真的响应**（例如弹出它自己的面板）。
+    /// - 绝不能在启动时调用，否则每次开机都替对方弹一次面板；
+    /// - 也不要对「快捷直达」绑定调用 —— 那些可能是 `Ctrl+S` 之类，
+    ///   注入会真的触发目标程序的动作。所以这里只测 `st.wake`。
+    pub fn verify_wake_delivery(&self) -> WakeDelivery {
+        self.bus.verify_wake_delivery()
     }
 
     pub fn save_hotkey(&self, binding: HotkeyBindingModel) -> Result<()> {
