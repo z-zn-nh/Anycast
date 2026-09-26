@@ -85,12 +85,22 @@ export component ResultPane inherits Rectangle {
             if row.is-header : Text {
                 x: 0px;
                 text: row.header;
+                // 设计稿 .section-header { padding: 8px 0 4px 0; line-height: 1; font-size: 11px }
+                // → 行盒就是 11px 高，墨迹中心落在 header 顶边 +8 +5.5 = 13.5。
+                // ⚠️ 不钉 height 的话 Slint 用**自然行高**（11px 文本 ≈16.5px），
+                //    墨迹中心变成 +16.25 → 段标题比设计稿低 2.75px（实测
+                //    设计稿 230.5 / 原生 233.3）。这是「CSS line-height:1 ↔ Slint
+                //    自然行高」这一族差异的第 3 处（另两处见 §13.5 / §14.5）。
+                // ⚠️ 网格视图的段标题在下方 `sec.title` 里是**另一份实现**，
+                //    两处必须同时改，否则只有一种视图对齐（见 §15.2）。
                 font-size: 11px;
                 font-weight: 600;
                 // 设计稿 .section-header { color: rgba(255,255,255,0.45); letter-spacing: 0.06em }
                 color: Theme.dark ? #ffffff73 : #00000073;
                 letter-spacing: 0.66px;
                 y: 8px;
+                height: 11px;
+                vertical-alignment: center;
             }
             if !row.is-header : Rectangle {
                 x: -6px;
@@ -199,11 +209,19 @@ export component ResultPane inherits Rectangle {
                     Text {
                         x: 0px;
                         text: sec.title;
+                        // 设计稿 .section-header { padding: 8px 0 4px 0; line-height: 1; font-size: 11px }
+                        // → 行盒就是 11px 高，墨迹中心落在 header 顶边 +8 +5.5 = 13.5。
+                        // ⚠️ 不钉 height 的话 Slint 用**自然行高**（11px 文本 ≈16.5px），
+                        //    墨迹中心变成 +16.25 → 整个段标题比设计稿低 2.75px（实测
+                        //    设计稿 230.5 / 原生 233.35）。这是「CSS line-height:1 ↔ Slint
+                        //    自然行高」这一族差异的第 3 处（另两处见 §13.5 / §14.5）。
                         font-size: 11px;
                         font-weight: 600;
                         color: Theme.dark ? #ffffff73 : #00000073;
                         letter-spacing: 0.66px;
                         y: 8px;
+                        height: 11px;
+                        vertical-alignment: center;
                     }
                 }
                 Rectangle {
