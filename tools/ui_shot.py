@@ -4,6 +4,10 @@
   python tools/ui_shot.py <out.png> [cx cy cw ch] [zoom]
   python tools/ui_shot.py <out.png>                 # 整窗
   python tools/ui_shot.py <out.png> 0 40 460 60 4   # 裁「窗口内逻辑 px」区域并放大 4 倍
+  python tools/ui_shot.py <out.png> --keys "e" --click 137,246 --click 40,541
+      # `--keys` 先打字；`--click x,y` 可**重复给多次**，按出现顺序依次点（每次之间留重绘时间）。
+      # ⚠️ 打字会触发中文输入法候选窗 → 能用「点分类/点按钮」达成的状态就别打字；
+      #    非打不可时 `--keys` 与后面的 `--click` 之间会自动等 0.5s 让候选窗先散。
 
 为什么要这个脚本（而不是 `win_shot.ps1` / `rt_probe.grab`）：
   1. **`hide_on_blur` 必须临时关掉**，否则一失焦窗口就隐藏、抓到的全是背后的东西；
@@ -45,14 +49,14 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(_ROOT, "target", "verif
 CROP = None
 ZOOM = 1
 KEYS = None
-CLICK = None
+CLICKS = []          # 支持多次 `--click x,y`，按出现顺序依次点
 args = sys.argv[2:]
 i = 0
 while i < len(args):
     if args[i] == "--keys":
         KEYS = args[i + 1]; i += 2
     elif args[i] == "--click":
-        CLICK = tuple(int(v) for v in args[i + 1].split(",")); i += 2
+        CLICKS.append(tuple(int(v) for v in args[i + 1].split(","))); i += 2
     elif CROP is None and len(args) - i >= 4:
         CROP = tuple(int(v) for v in args[i:i + 4]); i += 4
         if i < len(args) and args[i].isdigit():
@@ -105,15 +109,17 @@ def main():
             print("窗口已可见，保持激活态不动（避免 DWM 画标题栏）")
         time.sleep(0.3)
 
-        # 可选：先做一次交互（打开设置页 / 点某个控件），再抓图
-        if KEYS or CLICK:
+        # 可选：先做一次或多次交互（打开设置页 / 切分类 / 切视图），再抓图
+        if KEYS or CLICKS:
             fg_before = u.GetForegroundWindow() == h
             print(f"交互前 foreground={fg_before}")
             if KEYS:
                 rp.keys(KEYS)
-            if CLICK:
-                rp.click(*CLICK)
-            time.sleep(0.9)
+                time.sleep(0.5)          # 等输入法/查询走完再点，否则点击会被候选窗吃掉
+            for c in CLICKS:
+                rp.click(*c)
+                time.sleep(0.6)          # 每次点击都留出重绘时间，否则第二次点空
+            time.sleep(0.5)
             print(f"交互后 foreground={u.GetForegroundWindow() == h}")
             time.sleep(0.4)
 
