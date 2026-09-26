@@ -381,6 +381,9 @@ impl AppCore {
                 self.notify(BackendNotification::HotkeyRegisterFailed { label, reason });
             }
             SysEvent::ClipboardText(text) => self.on_clipboard(text),
+            // 原样转给 GUI：判断「本窗口是不是前台」要用 GUI 侧那份 `last_fg`，
+            // 在这里再判一次就是两处判据（迟早不一致）。核心层不掺和。
+            SysEvent::ForegroundChanged => self.notify(BackendNotification::ForegroundChanged),
         }
     }
 

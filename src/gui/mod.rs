@@ -541,51 +541,97 @@ impl Gui {
         });
     }
 
+    /// 此刻「失焦隐藏」会不会真的把窗口收掉。
+    ///
+    /// 抽成方法是因为有**两个**消费方，而它们必须给出**一致**的答案：
+    ///   * `poll_tick` —— 决定要不要 `hide_window()`；
+    ///   * `nudge_if_activation_changed` —— 决定要不要擦标题栏。
+    ///
+    /// 后者为什么也要问这一句：**马上就会被藏起来的窗口不用擦。** 擦了不但白做，
+    /// 还会在「用户点开别的窗口」这条**最常发生**的路径上给窗口来一次 `+1px`
+    /// 抖动 —— 那是纯亏。
+    fn blur_will_hide(&self, fg: HWND, hwnd: HWND) -> bool {
+        if fg == hwnd || fg.0.is_null() {
+            return false;
+        }
+        if !self.core.settings.read().hide_on_blur {
+            return false;
+        }
+        let st = self.state.borrow();
+        if blur_suppressed(st.suppress_blur, st.suppress_blur_until, Instant::now()) {
+            return false;
+        }
+        // 刚显示出来的 600ms 宽限期：这期间不隐藏，免得「唤醒键按下去了、
+        // 焦点还没交回来」就把窗口又收掉。
+        !st.shown_at.map(|t| t.elapsed() < Duration::from_millis(600)).unwrap_or(false)
+    }
+
+    /// 激活态一变，就擦掉 DWM 画到窗口上的浅色原生标题栏。
+    ///
+    /// 不这么做的话，窗口在**激活态一变**就会被 DWM 画上一条浅色原生标题栏，
+    /// 而且**不会自己消失**（详见 `last_fg` 字段的注释）。
+    ///
+    /// ⚠️ 两个方向都要：实测**失去**激活时会画上**整条**标题栏（顶带亮占比 99.4%），
+    /// **抢回**激活时也会留下一条**窄的**（约 60px，亮占比 11.7%），
+    /// 后者同样 5 秒不消失 —— 所以不能只在 `true → false` 时擦。
+    ///
+    /// 两个调用点，**互补而非重复**：
+    ///   * `BackendNotification::ForegroundChanged` —— 系统在前台窗口变化的那一刻
+    ///     就推上来（`SetWinEventHook(EVENT_SYSTEM_FOREGROUND)`），把发现延迟从
+    ///     200ms 压到几十毫秒量级；
+    ///   * `poll_tick`（200ms）—— **兜底**。out-of-context 钩子在消息队列拥塞时
+    ///     会被系统丢弃，只靠它可能整场收不到；有轮询在，最坏情况也只是退回
+    ///     装上钩子之前的水平，不会更差。
+    ///
+    /// 幂等：只有 `last_fg` 真的**变了**才扰动，所以两条路径同时到达也不会擦两次。
+    fn nudge_if_activation_changed(&self) {
+        let Some(hwnd) = self.hwnd() else { return };
+        // 窗口不可见就直接跳过。除了「藏起来了不用擦」，还有个必要原因：
+        // 隐藏时 `GetForegroundWindow()` 必然不等于本窗口，照样记进去的话，
+        // 下一次 `show_window` 会被误判成「刚抢回激活」而白擦一次。
+        if !self.ui.window().is_visible() {
+            return;
+        }
+        let fg = unsafe { GetForegroundWindow() };
+        let is_fg = fg == hwnd;
+        // 借用单独成块：后面要调窗口 API，别在 `RefCell` 借用期间调
+        // （回调可能重入，会 panic）。
+        let was = { self.state.borrow_mut().last_fg.replace(is_fg) };
+        // `was` 为 `None` 说明刚显示过（`show_window` 会清空），新画的一帧
+        // 没有残留要擦，不误报。
+        if was.is_some_and(|prev| prev != is_fg) && !self.blur_will_hide(fg, hwnd) {
+            // ⚠️ 这里**不能**用 `request_redraw()`：实测无效（客户端重绘盖不住
+            // DWM 画的非客户区）。有效手段只有「真的改一次窗口尺寸」，
+            // 且**必须换个线程发** —— 具体与已排除项见 `theme::nudge_surface`。
+            //
+            // 注意 `last_fg` **已经更新过了**（在判断之前），这里只是跳过这一次
+            // 扰动。不能连 `last_fg` 一起跳过：万一用户在隐藏真正发生之前又点回来，
+            // 那条「中间变过一次」的线索就丢了，画上的标题栏会一直留着 ——
+            // 正好是本函数要修的那个 bug。
+            theme::nudge_surface(hwnd);
+        }
+    }
+
     fn poll_tick(&self) {
         if !self.ui.window().is_visible() {
             return;
         }
         // 失焦自动隐藏
-        let hide_on_blur = self.core.settings.read().hide_on_blur;
-        let (suppress, grace) = {
-            let st = self.state.borrow();
-            (blur_suppressed(st.suppress_blur, st.suppress_blur_until, Instant::now()),
-             st.shown_at.map(|t| t.elapsed() < Duration::from_millis(600)).unwrap_or(false))
-        };
-        if hide_on_blur && !suppress && !grace {
-            if let Some(hwnd) = self.hwnd() {
-                let fg = unsafe { GetForegroundWindow() };
-                if fg != hwnd && !fg.0.is_null() {
-                    self.hide_window();
-                    return;
-                }
+        if let Some(hwnd) = self.hwnd() {
+            let fg = unsafe { GetForegroundWindow() };
+            if self.blur_will_hide(fg, hwnd) {
+                self.hide_window();
+                return;
             }
         }
         // 激活态变化 → 擦掉 DWM 画上的浅色原生标题栏。
         //
-        // 不这么做的话，窗口在**激活态一变**就会被 DWM 画上一条浅色原生标题栏，
-        // 而且**不会自己消失**（详见 `last_fg` 的注释）。
-        //
-        // ⚠️ 两个方向都要：实测**失去**激活时会画上**整条**标题栏（顶带亮占比
-        // 99.4%），**抢回**激活时也会留下一条**窄的**（约 60px，亮占比 11.7%），
-        // 后者同样 5 秒不消失 —— 所以不能只在 `true → false` 时擦。
-        //
         // 放在失焦隐藏**之后**：真被藏掉时不用管；只有窗口还要留在屏幕上
         // （`suppress_blur` 期间）才需要这一下。
-        if let Some(hwnd) = self.hwnd() {
-            let is_fg = unsafe { GetForegroundWindow() } == hwnd;
-            // 借用单独成块：后面要调窗口 API，别在 `RefCell` 借用期间调
-            // （回调可能重入，会 panic）。
-            let was = { self.state.borrow_mut().last_fg.replace(is_fg) };
-            // `was` 为 `None` 说明刚显示过（`show_window` 会清空），新画的一帧
-            // 没有残留要擦，不误报。
-            if was.is_some_and(|prev| prev != is_fg) {
-                // ⚠️ 这里**不能**用 `request_redraw()`：实测无效（客户端重绘盖不住
-                // DWM 画的非客户区）。有效手段只有「真的改一次窗口尺寸」，
-                // 且**必须换个线程发** —— 具体与已排除项见 `theme::nudge_surface`。
-                theme::nudge_surface(hwnd);
-            }
-        }
+        //
+        // 这里是**兜底**调用点（200ms）。即时那个在
+        // `BackendNotification::ForegroundChanged` 里，理由见该方法的注释。
+        self.nudge_if_activation_changed();
         // 尺寸持久化（用户拖拽边缘缩放后）
         let size = self.ui.window().size();
         let scale = self.ui.window().scale_factor().max(0.5);
@@ -1879,6 +1925,11 @@ impl Gui {
                 }
             }
             BackendNotification::SearchResultsReady { .. } => {}
+            // 系统前台窗口变了 —— 立刻擦一次，不等下一次 `poll_tick`。
+            // 注意这里**不判**「变的是不是本窗口」：钩子给的是「新的前台窗口」，
+            // 而我们要判的是「**本窗口**是不是前台」，判据只有 GUI 侧那份
+            // `last_fg` 才有 —— 交给 `nudge_if_activation_changed` 统一做。
+            BackendNotification::ForegroundChanged => self.nudge_if_activation_changed(),
         }
     }
 

@@ -7,7 +7,7 @@ use crate::core::hotkey::HotkeySpec;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicIsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
@@ -17,14 +17,15 @@ use windows::Win32::System::DataExchange::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, SendInput, UnregisterHotKey, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, KillTimer, PostMessageW, PostQuitMessage,
-    RegisterClassW, SetTimer, TranslateMessage, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_CLIPBOARDUPDATE, WM_HOTKEY, WM_TIMER, WNDCLASSW,
+    RegisterClassW, SetTimer, TranslateMessage, EVENT_SYSTEM_FOREGROUND, HWND_MESSAGE, MSG, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_CLIPBOARDUPDATE, WM_HOTKEY, WM_TIMER, WNDCLASSW,
 };
 
 const WM_ANYCAST_CMD: u32 = WM_APP + 1;
@@ -122,6 +123,16 @@ pub enum SysEvent {
     WakeHotkey,
     BindingHotkey(i32),
     ClipboardText(String),
+    /// 系统前台窗口变了（`EVENT_SYSTEM_FOREGROUND`）。
+    ///
+    /// 与 `WM_HOTKEY` 走的是**同一个 handler**，所以它同样在系统消息线程上发出 ——
+    /// 消费方必须自己跨线程（`AppCore` 那一层已经统一转成
+    /// `BackendNotification`，由 GUI 在 Slint 事件循环里收）。
+    ///
+    /// 存在的理由只有一个：把「本窗口激活态变了」的发现延迟从 200ms 轮询降到
+    /// 「事件发生即回调」，好让 DWM 画上的浅色原生标题栏更快被擦掉。
+    /// 轮询仍然保留作兜底（out-of-context 钩子在队列拥塞时会被系统丢弃）。
+    ForegroundChanged,
     /// 注册失败。`id` 是 `WAKE_HOTKEY_ID` 或某个绑定的 id。
     ///
     /// 为什么需要它：`RegisterHotKey` 失败以前只 `log::warn!`，用户完全看不到 ——
@@ -145,6 +156,42 @@ struct ThreadState {
 
 thread_local! {
     static STATE: RefCell<Option<ThreadState>> = const { RefCell::new(None) };
+}
+
+/// WinEvent 钩子回调专用的事件出口。
+///
+/// 为什么不直接用 `STATE` 里的 `handler`：钩子回调**可能在 `handle_commands`
+/// 持有 `STATE` 可变借用期间被派发** —— `handle_commands` 里有 `SendInput`
+/// （投递自检注入按键），而注入按键会改前台窗口，前台变化正是本钩子监听的事件。
+/// 那时再 `STATE.with(|s| s.borrow())` 就是重入同一把 `RefCell` → panic。
+/// 用独立 static 存取（`SysHandler` 是 `Send + Sync`），整条路径不碰 `RefCell`。
+static EVENT_HANDLER: OnceLock<SysHandler> = OnceLock::new();
+
+/// `EVENT_SYSTEM_FOREGROUND` 的回调，**在系统消息线程上被调用**。
+///
+/// 只做一件事：把事件转给 handler。两条禁令 ——
+///   * **绝不能碰 `STATE`**（理由见 `EVENT_HANDLER` 的注释）；
+///   * **不能做任何耗时的事**：回调是串行派发的，堵住它等于堵住之后所有前台通知。
+///
+/// 真正「本窗口是不是前台」的判断留给 GUI 侧做：这个回调拿到的 `hwnd` 是
+/// **新的前台窗口**，抢焦点时它是对方，和我们要判的东西不是一回事。
+unsafe extern "system" fn win_event_proc(
+    _hook: HWINEVENTHOOK,
+    event: u32,
+    _hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    // 当前只订阅了这一个事件，理论上收不到别的；仍然判一次 ——
+    // 将来若把 eventmin/max 放宽，不至于静默串味。
+    if event != EVENT_SYSTEM_FOREGROUND {
+        return;
+    }
+    if let Some(h) = EVENT_HANDLER.get() {
+        h(SysEvent::ForegroundChanged);
+    }
 }
 
 pub struct SystemBus {
@@ -241,6 +288,13 @@ fn run_thread(rx: Receiver<SysCommand>, handler: SysHandler, ready: Sender<isize
                 return;
             }
         };
+        // 钩子回调的出口先备好：`win_event_proc` 不经过 `STATE`，必须在这里单独登记。
+        // `handler` 是 `Arc`，克隆一份进 static，另一份照旧进 `ThreadState`。
+        if EVENT_HANDLER.set(Arc::clone(&handler)).is_err() {
+            // 正常不会发生（`SystemBus::start` 全进程只调一次）。
+            // 真发生了说明有两个消息线程，钩子事件会全归第一个 —— 值得留痕。
+            log::warn!("WinEvent handler 已存在，前台变化通知可能落到旧的出口上");
+        }
         STATE.with(|s| {
             *s.borrow_mut() = Some(ThreadState {
                 rx,
@@ -252,11 +306,46 @@ fn run_thread(rx: Receiver<SysCommand>, handler: SysHandler, ready: Sender<isize
                 verify: None,
             })
         });
+        // 前台窗口变化的**即时**通知，用来擦 DWM 画上的原生标题栏。
+        //
+        // `WINEVENT_OUTOFCONTEXT`：回调在本线程（消息线程）执行，所以本线程必须
+        // 一直在泵消息 —— 下面那个 `GetMessageW` 循环就是。**不要**把这里改成
+        // `WINEVENT_INCONTEXT`：那会要求一个 DLL，且回调在目标进程里跑。
+        //
+        // 装不上不算致命：GUI 侧的 200ms 轮询仍在跑，只是退回「最坏 200ms 才发现」，
+        // 也就是装上之前的行为。所以这里只告警、不中断。
+        //
+        // `ANYCAST_NO_FOREGROUND_HOOK=1` 时**不装**，专供 A/B：要证明「钩子真把
+        // 发现延迟降下来了」，就得让同一台机器上的两次测量**只差这一个变量**
+        // （判据见 doc §12.5.5）。
+        let hook = if std::env::var("ANYCAST_NO_FOREGROUND_HOOK").ok().as_deref() == Some("1") {
+            log::info!("ANYCAST_NO_FOREGROUND_HOOK=1：不装前台变化钩子（A/B 对照），退回 200ms 轮询");
+            HWINEVENTHOOK::default()
+        } else {
+            let h = SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_FOREGROUND,
+                None,
+                Some(win_event_proc),
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT,
+            );
+            if h.is_invalid() {
+                log::warn!("SetWinEventHook(EVENT_SYSTEM_FOREGROUND) 安装失败，前台变化退回 200ms 轮询");
+            } else {
+                log::info!("前台变化钩子已装上（EVENT_SYSTEM_FOREGROUND）：激活态变化即时通知");
+            }
+            h
+        };
         let _ = ready.send(hwnd.0 as isize);
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+        if !hook.is_invalid() {
+            let _ = UnhookWinEvent(hook);
         }
         STATE.with(|s| {
             if let Some(st) = s.borrow_mut().take() {
@@ -579,6 +668,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 mod tests {
     use super::*;
     use crate::core::hotkey::parse_hotkey;
+    use std::sync::atomic::AtomicUsize;
 
     fn spec(text: &str) -> HotkeySpec {
         parse_hotkey(text).expect("测试用的组合键必须可解析")
@@ -626,5 +716,29 @@ mod tests {
         assert_eq!(c.modifiers, MOD_CONTROL.0 | MOD_ALT.0 | MOD_SHIFT.0);
         assert_ne!(VERIFY_CONTROL_ID, PROBE_ID);
         assert_ne!(VERIFY_CONTROL_ID, WAKE_HOTKEY_ID);
+    }
+
+    #[test]
+    fn win_event_proc_forwards_only_the_subscribed_event() {
+        // 钩子回调「串味」是最贵的一类错：把别的事件也转出去，GUI 会在无关的
+        // 系统事件上白擦一次 —— 不报错、没日志，只是偶尔闪一下。
+        // 用一个计数 handler 把方向钉住。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        // 全进程只能设一次；用 get_or_init 保证重复执行也不会 panic。
+        EVENT_HANDLER.get_or_init(move || {
+            Arc::new(move |_ev: SysEvent| {
+                counter.fetch_add(1, Ordering::SeqCst);
+            })
+        });
+        unsafe {
+            // 相邻的事件号（EVENT_SYSTEM_MENUSTART = 4）必须被丢掉
+            win_event_proc(HWINEVENTHOOK::default(), EVENT_SYSTEM_FOREGROUND + 1, HWND::default(), 0, 0, 0, 0);
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "非订阅事件不应转发");
+        unsafe {
+            win_event_proc(HWINEVENTHOOK::default(), EVENT_SYSTEM_FOREGROUND, HWND::default(), 0, 0, 0, 0);
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "订阅事件应原样转发一次");
     }
 }

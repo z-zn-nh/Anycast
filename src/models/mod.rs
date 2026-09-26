@@ -216,6 +216,18 @@ pub enum BackendNotification {
     IndexProgress { files: u64, content_files: u64, done: bool },
     ToastMessage { text: String, icon: String },
     WakeRequested,
+    /// **系统前台窗口变了**（`SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` 推上来）。
+    ///
+    /// 它只服务一件事：擦掉 DWM 在激活态变化时画到窗口上的浅色原生标题栏
+    /// （见 `gui::Gui::nudge_if_activation_changed`）。
+    ///
+    /// 刻意**不带任何字段**：钩子在系统前台窗口变化时无条件回调，
+    /// 携带的 `hwnd` 是「新的前台窗口」，但 GUI 侧要判的是「**本窗口**是不是前台」，
+    /// 两者不是一回事（对方抢焦点时 `hwnd` 是对方的）。把判断留给 GUI 侧统一做，
+    /// 免得这里多一处会走样的判据。
+    ///
+    /// ⚠️ 这是**高频**通知（用户每次切窗口都来一发），消费方必须廉价。
+    ForegroundChanged,
 }
 
 #[cfg(test)]
