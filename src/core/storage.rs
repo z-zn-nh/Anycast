@@ -616,6 +616,25 @@ impl Storage {
         .unwrap_or(0)
     }
 
+    /// 轻量回收运行时缓存：WAL 落盘并截断 + 刷新查询计划统计。
+    ///
+    /// 与 `maintenance(true)`（设置页「整理索引库」）的区别是**不做 VACUUM** ——
+    /// VACUUM 要重写整库、占 2 倍磁盘、期间独占写锁，不适合随手点的按钮。
+    /// 返回**实际**回收的字节数（`-wal` 的减少量），让调用方能如实告诉用户
+    /// 「释放了多少」，而不是凭空报一个数。
+    ///
+    /// ⚠️ 本机没有缩略图 / 临时文件缓存目录，WAL 就是唯一的运行时缓存
+    /// （原型里「释放 14.8 MB 缩略图缓存」是虚构文案）。
+    pub fn clear_runtime_cache(&self) -> Result<u64> {
+        let before = wal_bytes();
+        {
+            let conn = self.conn.lock();
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            let _ = conn.execute_batch("PRAGMA optimize;");
+        }
+        Ok(before.saturating_sub(wal_bytes()))
+    }
+
     /// 空闲页字节数。实测旧库 99.6MB 里有 53.3MB 是空闲页（53.5%）。
     pub fn freelist_bytes(&self) -> i64 {
         let conn = self.conn.lock();
@@ -1254,6 +1273,15 @@ impl Storage {
             after_free: after.1,
         })
     }
+}
+
+/// 索引库 WAL 日志文件的物理体积。这是本应用**唯一**的运行时缓存，
+/// 也是 `clear_runtime_cache()` 唯一能真实回收的东西。
+pub fn wal_bytes() -> u64 {
+    let db = crate::core::settings::db_path();
+    std::fs::metadata(format!("{}-wal", db.display()))
+        .map(|m| m.len())
+        .unwrap_or(0)
 }
 
 /// 索引一致性快照

@@ -230,6 +230,7 @@ export component AppWindow inherits Window {
                     items: root.pinned;
                     collapsed: root.pinned-collapsed;
                     selected: root.pinned-selected;
+                    dbl-launch: Settings.double-click;
                     toggle => { root.toggle-pinned(); }
                     select(i) => { root.pinned-select(i); }
                     activate(i) => { root.pinned-activate(i); }
@@ -252,6 +253,7 @@ export component AppWindow inherits Window {
                     selected-h: root.selected-h;
                     query: root.query;
                     smart: root.mode == "smart" && root.query != "";
+                    dbl-launch: Settings.double-click;
                     select(i) => { root.select(i); }
                     activate(i) => { root.activate(i); }
                     context(i, x, y) => { root.context(i, x, y); }

@@ -7,6 +7,8 @@ export component PinnedShelf inherits Rectangle {
     in property <[ResultItem]> items;
     in-out property <bool> collapsed: false;
     in property <int> selected: -1;
+    // 同 ResultPane.dbl-launch：由设置页「双击条目立即执行」驱动
+    in property <bool> dbl-launch: true;
     callback toggle();
     callback select(int);
     callback activate(int);
@@ -138,7 +140,7 @@ export component PinnedShelf inherits Rectangle {
                             cta := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.select(i); }
-                                double-clicked => { root.activate(i); }
+                                double-clicked => { if (root.dbl-launch) { root.activate(i); } }
                                 pointer-event(ev) => {
                                     if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.down) {
                                         root.context(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);

@@ -531,8 +531,12 @@ export component SettingsModal inherits Rectangle {
                                 FluentSwitch { checked: Settings.ai-enabled; toggled(v) => { Settings.set-bool("ai_enabled", v); } } }
                             Row { label: "本地向量 Embedding 模型"; desc: "sqlite-vec + bge-small-zh 量化模型（EmbeddingBackend 接口已预留）";
                                 Badge { text: Settings.ai-model; } }
-                            Row { label: "按需动态唤醒加载"; desc: "日常极速搜索不加载模型（0 内存消耗），仅在智能模式下唤醒"; divider: false;
-                                FluentSwitch { checked: Settings.ai-lazy; toggled(v) => { Settings.set-bool("ai_lazy_load", v); } } }
+                            // ⚠️ 这个开关目前**没有任何消费方**：判断层只有规则引擎（rule）与
+                            // 云端（jev），本地模型后端（Laya）尚未接入，所以「懒加载」是恒真状态。
+                            // 与其留一个拨了没反应的开关，不如置灰并说清楚 —— 接入后把
+                            // enabled: false 去掉、把 toggled 接回 set-bool("ai_lazy_load", v) 即可。
+                            Row { label: "按需动态唤醒加载"; desc: "本地模型后端接入后生效：当前判断层只有规则引擎，始终 0 常驻内存，故本开关暂无可切换的行为"; divider: false;
+                                FluentSwitch { checked: Settings.ai-lazy; enabled: false; } }
                         }
                         Group {
                             title: "语义意图理解";

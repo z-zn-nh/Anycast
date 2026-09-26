@@ -122,11 +122,99 @@ fn plan_merge(
     Some((fresh, selected))
 }
 
-fn to_ui_item(item: &SearchItemModel) -> ResultItem {
+/// 敏感号码脱敏（设置页「银行卡与身份证脱敏展示」）。
+///
+/// 识别两类：银行卡号（连续 15~19 位数字，允许夹单空格 / 短横分隔）与
+/// 身份证号（17 位数字 + 校验位 `X`）。只保留首 4 位与末 4 位，中段换成 `*`，
+/// 分隔符与校验位原样保留。
+///
+/// ⚠️ 只作用于**展示**（`title` / `preview`）—— `full_path` 始终是原文，
+/// 而复制、打开走的都是 `full_path`，所以用户实际拿到的东西不会被打码。
+fn mask_sensitive(text: &str) -> String {
+    const KEEP: usize = 4;
+    // 卡号最多夹 4 个分隔符（`6222 0212 3456 7890` 是 3 个）。不设上限的话，
+    // 「1 2 3 4 … 15」这种凑巧 15 位数字的普通文本也会被误伤。
+    const MAX_SEP: usize = 4;
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0usize;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        // 收集「数字 + 单个分隔符」的候选段
+        let start = i;
+        let (mut digits, mut seps, mut last_sep) = (0usize, 0usize, false);
+        while i < chars.len() {
+            let c = chars[i];
+            if c.is_ascii_digit() {
+                digits += 1;
+                last_sep = false;
+                i += 1;
+            } else if (c == ' ' || c == '-') && !last_sep {
+                seps += 1;
+                last_sep = true;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        // 段尾的分隔符不算段内容，留给下一轮原样输出
+        let mut end = i;
+        while end > start && !chars[end - 1].is_ascii_digit() {
+            end -= 1;
+            seps -= 1;
+        }
+        let id_tail = digits == 17 && end < chars.len() && (chars[end] == 'x' || chars[end] == 'X');
+        let sensitive =
+            seps <= MAX_SEP && digits > KEEP * 2 && ((15..=19).contains(&digits) || id_tail);
+        if !sensitive {
+            out.extend(&chars[start..end]);
+            i = end;
+            continue;
+        }
+        let mut seen = 0usize;
+        for k in start..end {
+            let c = chars[k];
+            if c.is_ascii_digit() {
+                seen += 1;
+                if seen > KEEP && seen <= digits - KEEP {
+                    out.push('*');
+                    continue;
+                }
+            }
+            out.push(c);
+        }
+        if id_tail {
+            out.push(chars[end]);
+            end += 1;
+        }
+        i = end;
+    }
+    out
+}
+
+fn to_ui_item(item: &SearchItemModel, mask_clipboard: bool) -> ResultItem {
+    // 脱敏只对剪贴板条目生效，且只碰展示字段（见 `mask_sensitive` 的注释）。
+    // 用 `Cow` 而不是 clone：不开脱敏时保持零拷贝，开了才付一次字符串分配。
+    let mask = mask_clipboard && item.item_type == ItemType::Clipboard;
+    let title: std::borrow::Cow<'_, str> = if mask {
+        std::borrow::Cow::Owned(mask_sensitive(&item.title))
+    } else {
+        std::borrow::Cow::Borrowed(&item.title)
+    };
+    let preview: std::borrow::Cow<'_, str> = if mask {
+        std::borrow::Cow::Owned(mask_sensitive(&item.preview))
+    } else {
+        std::borrow::Cow::Borrowed(&item.preview)
+    };
     ResultItem {
         id: ss(&item.id),
         kind: ss(item.item_type.as_str()),
-        title: ss(&item.title),
+        title: ss(&title),
         subtitle: ss(&item.subtitle),
         badge: ss(&item.badge),
         icon: ss(&item.icon_name),
@@ -134,7 +222,7 @@ fn to_ui_item(item: &SearchItemModel) -> ResultItem {
         reason: ss(&item.reason),
         action: ss(&item.action_hint),
         is_pinned: item.is_pinned,
-        preview: ss(&item.preview),
+        preview: ss(&preview),
         sub_type: ss(&item.sub_type),
     }
 }
@@ -580,6 +668,7 @@ impl Gui {
         let mut rows: Vec<ResultRow> = Vec::with_capacity(items.len() + 4);
         let mut sections: Vec<GridSection> = Vec::new();
         let mut last_section = String::new();
+        let mask_clip = self.core.settings.read().clipboard_mask_sensitive;
         for (i, it) in items.iter().enumerate() {
             if it.section != last_section {
                 rows.push(ResultRow { is_header: true, header: ss(&it.section), index: -1, item: ResultItem::default() });
@@ -589,9 +678,9 @@ impl Gui {
             if let Some(sec) = sections.last_mut() {
                 sec.count += 1;
             }
-            rows.push(ResultRow { is_header: false, header: ss(""), index: i as i32, item: to_ui_item(it) });
+            rows.push(ResultRow { is_header: false, header: ss(""), index: i as i32, item: to_ui_item(it, mask_clip) });
         }
-        let ui_items: Vec<ResultItem> = items.iter().map(to_ui_item).collect();
+        let ui_items: Vec<ResultItem> = items.iter().map(|it| to_ui_item(it, mask_clip)).collect();
         let selected = selected.min(items.len().saturating_sub(1));
         {
             let mut st = self.state.borrow_mut();
@@ -762,7 +851,8 @@ impl Gui {
 
     fn refresh_pinned(&self) {
         let pins = self.core.pinned_items();
-        let ui_items: Vec<ResultItem> = pins.iter().map(to_ui_item).collect();
+        let mask_clip = self.core.settings.read().clipboard_mask_sensitive;
+        let ui_items: Vec<ResultItem> = pins.iter().map(|it| to_ui_item(it, mask_clip)).collect();
         self.state.borrow_mut().pinned = pins;
         self.ui.set_pinned(ModelRc::new(VecModel::from(ui_items)));
     }
@@ -1062,13 +1152,14 @@ impl Gui {
         g.set_ai_backend_status(ss(&self.core.decision.backend_status_line(&s)));
         self.sync_stats_to_ui();
         self.sync_hotkeys_to_ui();
+        let mask_clip = self.core.settings.read().clipboard_mask_sensitive;
         let recent: Vec<ResultItem> = self
             .core
             .recent_items()
             .iter()
             .filter(|i| i.item_type != ItemType::Clipboard)
             .take(12)
-            .map(to_ui_item)
+            .map(|it| to_ui_item(it, mask_clip))
             .collect();
         g.set_recent_picker(ModelRc::new(VecModel::from(recent)));
     }
@@ -1295,6 +1386,12 @@ impl Gui {
             "ai_cloud_fallback" => self.toast(
                 if v { "已允许升级到云端（仅「自动」模式生效）" } else { "已禁止升级到云端，全部本地解析" },
                 "globe"),
+            // 脱敏是纯展示层开关，改完必须立刻重绘 —— 否则列表上的号码纹丝不动，
+            // 用户会以为开关没生效（这个坑和上面几条是同一类）。
+            "clipboard_mask_sensitive" => {
+                self.refresh_search();
+                self.refresh_pinned();
+            }
             _ => {}
         }
         if reindex {
@@ -1873,8 +1970,18 @@ impl Gui {
         sbind!(on_action, |g, a| {
             match a.as_str() {
                 "clear-cache" => {
-                    let _ = g.core.storage.kv_set("last_cache_clear", &chrono::Utc::now().to_rfc3339());
-                    g.toast("已清理运行时缓存", "check");
+                    // 这里原先只写了个 kv 键就弹「已清理运行时缓存」——磁盘上什么都没动，
+                    // 是纯假实现。现在真去回收，并把**实际**释放量报出来；
+                    // 无可回收时也如实说，而不是每次都报「已清理」。
+                    match g.core.storage.clear_runtime_cache() {
+                        Ok(0) => g.toast("运行时缓存已是干净的，无需清理", "check"),
+                        Ok(n) => g.toast(
+                            &format!("已回收索引库 WAL 日志 {}", crate::core::search::fmt_size(n as i64)),
+                            "check",
+                        ),
+                        Err(e) => g.toast(&format!("清理缓存失败: {e}"), "x"),
+                    }
+                    g.sync_stats_to_ui();
                 }
                 "rebuild-index" => {
                     g.core.rebuild_index();
@@ -2050,5 +2157,66 @@ mod tests {
     #[test]
     fn empty_upgrade_leaves_the_list_alone() {
         assert!(plan_merge(&shown(&["a", "b"]), 0, Vec::new()).is_none());
+    }
+
+    // ── 敏感号码脱敏（设置页「银行卡与身份证脱敏展示」）──
+    // 这个开关此前只写进配置文件、没有任何消费方，所以下面这几条同时守着
+    // 「真的打了码」和「不该打码的地方一个字都没动」。
+
+    /// 16 位卡号：中段打码，首尾各留 4 位。
+    #[test]
+    fn mask_hides_the_middle_of_a_card_number() {
+        assert_eq!(mask_sensitive("6222021234567890"), "6222********7890");
+    }
+
+    /// 带分隔符的卡号：分隔符原样保留，只对数字打码。
+    #[test]
+    fn mask_keeps_card_separators() {
+        assert_eq!(mask_sensitive("6222 0212 3456 7890"), "6222 **** **** 7890");
+        assert_eq!(mask_sensitive("6222-0212-3456-7890"), "6222-****-****-7890");
+    }
+
+    /// 18 位身份证（17 位数字 + 校验位 X）：校验位不能被吃掉。
+    #[test]
+    fn mask_keeps_the_id_check_digit() {
+        assert_eq!(mask_sensitive("11010119900307123X"), "1101*********7123X");
+    }
+
+    /// 普通文本里的短数字不能被误伤 —— 这是这个功能最容易伤到用户的地方。
+    #[test]
+    fn mask_leaves_ordinary_numbers_alone() {
+        for s in ["2026-09-25", "共 42 个文件", "v1.2.3 构建 1234", "订单号 12345678"] {
+            assert_eq!(mask_sensitive(s), s, "不该改动: {s}");
+        }
+    }
+
+    /// 分隔符数量有上限：`1 2 … 12` 凑巧也有 15 位数字，但它不是卡号。
+    /// 少了这个上限，这种普通文本会被整段打码。
+    #[test]
+    fn mask_rejects_long_runs_with_too_many_separators() {
+        let s = "1 2 3 4 5 6 7 8 9 10 11 12";
+        assert_eq!(s.chars().filter(char::is_ascii_digit).count(), 15, "这条用例的前提是正好 15 位数字");
+        assert_eq!(mask_sensitive(s), s);
+    }
+
+    /// 只有剪贴板条目会被打码；文件名里出现同样的数字必须原样显示。
+    #[test]
+    fn mask_only_applies_to_clipboard_items() {
+        let clip = SearchItemModel {
+            id: "clip:1".into(),
+            item_type: ItemType::Clipboard,
+            title: "6222021234567890".into(),
+            ..Default::default()
+        };
+        assert_eq!(to_ui_item(&clip, true).title.as_str(), "6222********7890");
+        assert_eq!(to_ui_item(&clip, false).title.as_str(), "6222021234567890", "开关关闭时必须原样");
+
+        let file = SearchItemModel {
+            id: "file:1".into(),
+            item_type: ItemType::File,
+            title: "6222021234567890.txt".into(),
+            ..Default::default()
+        };
+        assert_eq!(to_ui_item(&file, true).title.as_str(), "6222021234567890.txt", "非剪贴板条目不脱敏");
     }
 }
