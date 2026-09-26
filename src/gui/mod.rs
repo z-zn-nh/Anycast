@@ -2147,12 +2147,22 @@ impl Gui {
             // 「测试」会**真的启动/前置目标程序**（`AppCore::test_hotkey` →
             // `launcher::activate_or_launch`），所以焦点会跑到目标程序那边去。
             //
-            // ⚠️ 这里**故意不**像 `browse-folder` 那样把本窗口抢回最前。实测依据：
-            // 主窗口是 **topmost**（显示态 `GWL_EXSTYLE = 0x198`，含 `WS_EX_TOPMOST`），
-            // 而 `activate_or_launch` 启动出来的普通程序**不是** topmost ——
-            // 所以目标窗口**盖不住**本窗口，Toast 正常可见，不需要抢前台。
-            // 抢前台反而会把窗口留在最前，挡住用户真正要看的目标程序。
-            // → 别为了「和 browse-folder 统一」给它加 `force_foreground`。
+            // ⚠️ 这里**故意不**像 `browse-folder` 那样把本窗口抢回最前。实测依据
+            // （2026-09-25 端到端跑通，非推理）：
+            //   * 主窗口是 **topmost**（显示态 `GWL_EXSTYLE = 0x198`，含 `WS_EX_TOPMOST`），
+            //     目标程序（`shell_open` / `activate_or_launch` 出来的普通窗口）**不是**；
+            //   * 在**两者矩形的重叠区中心**取点查 z 序：`z0 = Anycast(topmost)`、
+            //     `z1 = 目标程序(非 topmost)` → 目标窗口**确实压在本窗口下面**，
+            //     Toast（画在窗口里）正常可见；
+            //   * 时间线：点完 0.35s / 0.70s / 1.10s 本窗口均可见且仍在最上，
+            //     前台已变成目标程序；到 **1.50s**（= 下面 `suppress_blur` 放开的时刻）
+            //     本窗口隐藏，把屏幕让给目标程序。
+            //   → 抢前台反而会把窗口留在最前、挡住用户真正要看的目标程序。
+            //   → 别为了「和 browse-folder 统一」给它加 `force_foreground`。
+            //
+            // ⚠️ 验证这条时**不能**用 `rt_probe.force_foreground`：它会摘掉
+            // `WS_EX_TOPMOST`（`HWND_TOPMOST` → `HWND_NOTOPMOST`），而「本窗口是不是
+            // 置顶」正是被测前提；被它碰过一次，本进程余下生命周期都不再置顶。
             g.state.borrow_mut().suppress_blur = true;
             match g.core.test_hotkey(id.as_str()) {
                 Ok(msg) => g.toast(&msg, "play"),

@@ -50,6 +50,36 @@ VK = {
     "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73, "f5": 0x74,
 }
 
+user32.VkKeyScanW.argtypes = [ctypes.c_wchar]
+user32.VkKeyScanW.restype = ctypes.c_short
+
+
+def vk_for(main):
+    """主键名 → (VK, 是否需要 Shift)。
+
+    ⚠️ **单个字符绝不能拿 `ord()` 当 VK** —— 只有字母和数字恰好重合
+    （`'a'`=0x41=VK_A、`'7'`=0x37=VK_7），**标点全部错位**，而且是错到
+    **别的键**上、不报任何错：
+
+        ord(",")=0x2C=VK_SNAPSHOT(PrintScreen)   真正的逗号是 0xBC(VK_OEM_COMMA)
+        ord(".")=0x2E=VK_DELETE                  真正的句点是 0xBE
+        ord("-")=0x2D=VK_INSERT                  真正的减号是 0xBD
+        ord("[")=0x5B=VK_LWIN  ← 会把 Win 键按下去
+        ord("\\")=0x5C=VK_RWIN
+
+    症状极隐蔽：脚本「按键成功、无异常」，但应用里那个快捷键**就是没反应**，
+    于是很容易反过来怀疑应用有 bug（本项目就这样误判过一次 `Ctrl+,`）。
+    所以：先查表，查不到再问 `VkKeyScanW`（它会连 Shift 状态一起给出）。
+    """
+    if main in VK:
+        return VK[main], False
+    if len(main) == 1:
+        res = user32.VkKeyScanW(main)
+        if res == -1:
+            raise SystemExit(f"ERR: 字符 {main!r} 在当前键盘布局下打不出来")
+        return res & 0xFF, bool(res & 0x100)
+    raise SystemExit(f"ERR: 未知按键 {main}")
+
 
 # ---------------------------------------------------------------- 窗口
 def all_windows():
@@ -218,11 +248,11 @@ def keys(combo):
         raise SystemExit("ERR: 无主键")
     main = rest[0]
     force_foreground(find_window())
+    vk, need_shift = vk_for(main)
+    if need_shift and "shift" not in mods:
+        mods.append("shift")            # 大写字母 / 上档符号，布局要求的 Shift 不能省
     for m in mods:
         _key(VK[m])
-    vk = VK.get(main) or (ord(main.upper()) if len(main) == 1 else None)
-    if vk is None:
-        raise SystemExit(f"ERR: 未知按键 {main}")
     _key(vk)
     time.sleep(0.04)
     _key(vk, up=True)
