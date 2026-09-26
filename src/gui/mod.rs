@@ -47,7 +47,17 @@ struct UiState {
     ctx_target: Option<SearchItemModel>,
     recording: Option<String>,
     shown_at: Option<Instant>,
+    /// 屏蔽「失焦自动隐藏」。给**同步**操作前后成对设置用（选文件夹、测快捷直达）。
     suppress_blur: bool,
+    /// 屏蔽「失焦自动隐藏」，但用**截止时刻**表示。
+    ///
+    /// 为什么要多一个：`suppress_blur` 是布尔量，一旦某条路径忘了复位（或结论
+    /// 因为线程 panic 没回来），`hide_on_blur` 就**永久失效**了，而且没有任何报错。
+    /// 截止时刻是自愈的 —— 到期自动失效，最坏情况只是多按一会儿。
+    ///
+    /// 目前的消费方：唤醒快捷键自检。它注入按键会让占用键的那个程序弹窗抢焦点，
+    /// 于是 `hide_on_blur` 把窗口藏起来，结论（画在窗口里）跟着一起没了。
+    suppress_blur_until: Option<Instant>,
     last_size: (u32, u32),
     size_changed_at: Option<Instant>,
     hwnd: Option<HWND>,
@@ -243,6 +253,19 @@ fn hotkey_icon(b: &HotkeyBindingModel) -> (&'static str, &'static str) {
     }
 }
 
+/// 「此刻要不要屏蔽失焦自动隐藏」。
+///
+/// 两个来源取或：
+///   * `flag` —— 同步操作前后成对设置的布尔量（选文件夹、测快捷直达）；
+///   * `until` —— 截止时刻，给「结果什么时候回来不由我决定」的场景用（唤醒键自检）。
+///
+/// 抽成纯函数只为能钉住判据方向：`now < until` 写成 `until < now` 的话，截止时刻
+/// 一设下去就**立刻失效** —— 表现是 `hide_on_blur` 永久失灵，而且**没有任何报错**。
+/// 这类静默失效只能靠用例拦。
+fn blur_suppressed(flag: bool, until: Option<Instant>, now: Instant) -> bool {
+    flag || until.is_some_and(|t| now < t)
+}
+
 pub fn run(silent: bool) -> anyhow::Result<()> {
     let ui = AppWindow::new()?;
     let tray = TrayIcon::new()?;
@@ -277,6 +300,7 @@ pub fn run(silent: bool) -> anyhow::Result<()> {
             recording: None,
             shown_at: None,
             suppress_blur: false,
+            suppress_blur_until: None,
             last_size: (settings.window_width, settings.window_height),
             size_changed_at: None,
             hwnd: None,
@@ -483,7 +507,8 @@ impl Gui {
         let hide_on_blur = self.core.settings.read().hide_on_blur;
         let (suppress, grace) = {
             let st = self.state.borrow();
-            (st.suppress_blur, st.shown_at.map(|t| t.elapsed() < Duration::from_millis(600)).unwrap_or(false))
+            (blur_suppressed(st.suppress_blur, st.suppress_blur_until, Instant::now()),
+             st.shown_at.map(|t| t.elapsed() < Duration::from_millis(600)).unwrap_or(false))
         };
         if hide_on_blur && !suppress && !grace {
             if let Some(hwnd) = self.hwnd() {
@@ -568,6 +593,18 @@ impl Gui {
     /// 有副作用就不测，但也不能不告诉用户。所以文案里写明了这一点。
     fn verify_wake_async(self: &Rc<Self>, recorded: bool) {
         self.toast("正在检测唤醒快捷键能否真正送达…（若被别的程序占用，它可能会弹出自己的面板）", "keyboard");
+        // 自检会**真的注入一次按键**。如果这个键被别的程序用键盘钩子吞了，
+        // 那个程序会弹出自己的窗口、把焦点抢走 —— `hide_on_blur` 随即把本窗口藏起来。
+        // 而结论是画在窗口里的：窗口一藏，结论就跟着没了。
+        //
+        // 最要命的是**这次自检的结论恰恰就是「键坏了」**：用户连「按热键把窗口
+        // 叫回来」这条退路都没有，只能去点托盘 —— 而托盘这条路他未必想得到。
+        //
+        // 所以自检期间按住失焦隐藏。用截止时刻而不是布尔量：`verify_wake_delivery`
+        // 自己带 3s 超时，正常情况下结论一定会回来并由 `report_wake_delivery`
+        // 续期；这个 6s 只是兜底，保证任何异常路径都不会让 `hide_on_blur` 卡死。
+        self.state.borrow_mut().suppress_blur_until =
+            Some(Instant::now() + Duration::from_millis(6000));
         let core = Arc::clone(&self.core);
         let ui_weak = self.ui.as_weak();
         std::thread::spawn(move || {
@@ -584,6 +621,19 @@ impl Gui {
     /// 只有 `Delivered` 允许用「✓」；其余一律「⚠」—— 把 `Inconclusive` 也报成
     /// 成功就是在骗人，而这条链路的整个毛病正是「静默地假装正常」。
     fn report_wake_delivery(self: &Rc<Self>, d: WakeDelivery, recorded: bool) {
+        // 注入按键把「占用键的那个程序」叫出来了，它的窗口此刻就在最前面。
+        // 不把本窗口拉回最前，结论就是「画在窗口里、但被对方挡着」—— 等于没说。
+        // 这一步同时让 `poll_tick` 不再判成失焦（前台变回自己了）。
+        //
+        // ⚠️ 必须**先确认窗口可见**再前置：`force_foreground` 内部是裸的
+        // `ShowWindow(SW_SHOW)`，窗口真被藏起来时它只把原生窗口亮出来，
+        // Slint 侧的 `is_visible()` 仍是 false —— 用户会看到一个**空窗口**
+        // 且没有结论，比什么都不做更糟。
+        if self.ui.window().is_visible() {
+            if let Some(hwnd) = self.hwnd() {
+                launcher::force_foreground(hwnd);
+            }
+        }
         let key = hotkey::normalize(&self.ui.global::<Settings>().get_wake_hotkey());
         let ok = d == WakeDelivery::Delivered;
         let text = match (d, recorded, ok) {
@@ -594,6 +644,11 @@ impl Gui {
             (_, false, false) => format!("⚠ 唤醒快捷键 {key}：{}", d.describe()),
         };
         self.toast(&text, if ok { "check" } else { "alert" });
+        // 结论要看满：Toast 寿命 2600ms，这里再按住 3s。
+        // 少了这一步，对方的窗口一旦再次拿到前台，下一次 `poll_tick`（200ms 一跳）
+        // 就会把窗口连结论一起藏掉 —— 结论显示不到半秒，等于没显示。
+        self.state.borrow_mut().suppress_blur_until =
+            Some(Instant::now() + Duration::from_millis(3000));
     }
 
     // ------------------------------------------------------------------
@@ -2272,5 +2327,28 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(to_ui_item(&file, true).title.as_str(), "6222021234567890.txt", "非剪贴板条目不脱敏");
+    }
+
+    /// 截止时刻还没到 → 屏蔽失焦隐藏。这是「自检期间别把窗口藏起来」赖以成立的判据。
+    #[test]
+    fn blur_suppressed_until_deadline() {
+        let now = Instant::now();
+        assert!(blur_suppressed(false, Some(now + Duration::from_millis(3000)), now));
+    }
+
+    /// 截止时刻已过 → 不再屏蔽。这一条保证开关**自愈**：
+    /// 就算某条路径忘了复位，`hide_on_blur` 也不会永久失灵。
+    #[test]
+    fn blur_unsuppressed_after_deadline() {
+        let now = Instant::now();
+        assert!(!blur_suppressed(false, Some(now - Duration::from_millis(1)), now));
+    }
+
+    /// 没有截止时刻时只看布尔量（选文件夹 / 测快捷直达那条老路径）。
+    #[test]
+    fn blur_flag_still_works_without_deadline() {
+        let now = Instant::now();
+        assert!(blur_suppressed(true, None, now));
+        assert!(!blur_suppressed(false, None, now));
     }
 }
